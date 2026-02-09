@@ -63,6 +63,14 @@ MEDIA_DIR = "../media/"
 USE_ML_VERIFICATION = True  # Set to False to use CV-only mode
 ML_CONFIDENCE_THRESHOLD = 0.45  # Lower threshold for pre-trained models
 
+# Video Processing Optimization
+VIDEO_FRAME_SKIP = 0  # Skip N frames for faster processing (0 = process every frame)
+USE_FAST_VIDEO_CODEC = True  # Use faster codec for video reading
+DISABLE_VIDEO_WRITE = False  # Set True to skip video writing for faster testing
+RESIZE_FRAME = False  # Set True to resize frames for faster processing
+RESIZE_WIDTH = 640  # Width for resized frames (if RESIZE_FRAME=True)
+RESIZE_HEIGHT = 360  # Height for resized frames (if RESIZE_FRAME=True)
+
 # Thresholds for events
 LEANING_THRESHOLD = 3      # consecutive frames needed for leaning
 PASSING_THRESHOLD = 3      # consecutive frames needed for passing paper
@@ -345,8 +353,16 @@ cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
 # Optimize video capture for better performance
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer size for lower latency
+
 if USE_CAMERA:
     cap.set(cv2.CAP_PROP_FPS, 30)  # Set camera FPS
+else:
+    # Video file optimizations for maximum FPS
+    if USE_FAST_VIDEO_CODEC:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Fast codec
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Larger buffer for video files
+    # Enable hardware acceleration if available
+    cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
 
 # ========================
 # PER-EVENT STATE VARIABLES
@@ -392,6 +408,9 @@ import time
 fps_start_time = time.time()
 fps_frame_count = 0
 fps_display = 0
+
+# Frame skipping counter for video optimization
+frame_skip_counter = 0
     
 try:  
     while cap.isOpened():
@@ -399,7 +418,21 @@ try:
         if not ret:
             break
 
-        frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+        # Frame skipping for faster video processing
+        if VIDEO_FRAME_SKIP > 0 and not USE_CAMERA:
+            frame_skip_counter += 1
+            if frame_skip_counter % (VIDEO_FRAME_SKIP + 1) != 0:
+                continue
+
+        # Optional frame resizing for faster processing
+        if RESIZE_FRAME and not USE_CAMERA:
+            frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
+            working_width = RESIZE_WIDTH
+            working_height = RESIZE_HEIGHT
+        else:
+            frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+            working_width = FRAME_WIDTH
+            working_height = FRAME_HEIGHT
         
         # Calculate FPS
         fps_frame_count += 1
@@ -408,6 +441,9 @@ try:
             fps_display = fps_frame_count / (fps_end_time - fps_start_time)
             fps_start_time = time.time()
             fps_frame_count = 0
+            # Print FPS to console for monitoring (especially for video files)
+            if not USE_CAMERA:
+                print(f"📊 Processing Speed: {fps_display:.1f} FPS", end='\r')
 
         # Overlay: date/time and lecture hall info
         now = datetime.now()
@@ -422,7 +458,7 @@ try:
         cv2.putText(frame, overlay_text, (50, 100),
                     cv2.FONT_HERSHEY_DUPLEX, 1.1, (255,255,255), 2, cv2.LINE_AA)
         hall_text = f"{LECTURE_HALL_NAME} | {BUILDING}"
-        cv2.putText(frame, hall_text, (50, FRAME_HEIGHT - 50),
+        cv2.putText(frame, hall_text, (50, working_height - 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2, cv2.LINE_AA)
 
         # ========================================
@@ -436,7 +472,7 @@ try:
                     device=DEVICE,
                     half=USE_HALF_PRECISION,
                     verbose=False,
-                    imgsz=640,  # Can reduce to 416 or 320 for even faster inference
+                    imgsz=640,  # Original setting for best performance
                     conf=0.5
                 )
             else:
@@ -560,7 +596,7 @@ try:
             if not lean_in_progress:
                 lean_in_progress = True
                 lean_frames = 1
-                if not lean_recording:
+                if not lean_recording and not DISABLE_VIDEO_WRITE:
                     lean_recording = True
                     fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
                     lean_video = cv2.VideoWriter("output_leaning.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
@@ -570,7 +606,7 @@ try:
             if lean_in_progress:
                 lean_in_progress = False
                 if lean_frames >= LEANING_THRESHOLD:
-                    if lean_recording and lean_video:
+                    if lean_recording and lean_video and not DISABLE_VIDEO_WRITE:
                         lean_video.release()
                     now_save = datetime.now()
                     date_db = now_save.date().isoformat()
@@ -605,7 +641,7 @@ try:
                 lean_recording = False
                 lean_video = None
 
-        if lean_in_progress and lean_recording and lean_video:
+        if lean_in_progress and lean_recording and lean_video and not DISABLE_VIDEO_WRITE:
             lean_video.write(frame)
 
         # 5) Update passing paper event states
@@ -658,7 +694,7 @@ try:
                 passing_recording = False
                 passing_video = None
 
-        if passing_in_progress and passing_recording and passing_video:
+        if passing_in_progress and passing_recording and passing_video and not DISABLE_VIDEO_WRITE:
             passing_video.write(frame)
 
         # 6) Update turning back event states
@@ -711,7 +747,7 @@ try:
                 turning_recording = False
                 turning_video = None
 
-        if turning_in_progress and turning_recording and turning_video:
+        if turning_in_progress and turning_recording and turning_video and not DISABLE_VIDEO_WRITE:
             turning_video.write(frame)
 
         # 7) Update hand raise event states
@@ -764,7 +800,7 @@ try:
                 hand_raise_recording = False
                 hand_raise_video = None
 
-        if hand_raise_in_progress and hand_raise_recording and hand_raise_video:
+        if hand_raise_in_progress and hand_raise_recording and hand_raise_video and not DISABLE_VIDEO_WRITE:
             hand_raise_video.write(frame)
 
         # ========================================
@@ -824,7 +860,7 @@ try:
                 mobile_frames += 1
             cv2.putText(frame, ACTION_MOBILE + "!", (850, 200),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0,165,255), 3)
-            if mobile_recording and mobile_video:
+            if mobile_recording and mobile_video and not DISABLE_VIDEO_WRITE:
                 mobile_video.write(frame)
         else:
             if mobile_in_progress:
