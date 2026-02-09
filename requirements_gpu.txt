@@ -1,0 +1,31 @@
+# GPU-Accelerated AIInvigilator Requirements
+# Install with: pip install -r requirements_gpu.txt
+
+# Core Django and Web
+Django==3.2.7
+Pillow==11.1.0
+mysqlclient==2.1.1
+django-environ==0.11.2
+twilio==9.5.1
+
+# Computer Vision
+opencv-python==4.11.0.86
+numpy==2.2.1
+
+# GPU-Accelerated PyTorch (CUDA 11.8)
+# For CUDA 12.1, change cu118 to cu121
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.1.0+cu118
+torchvision==0.16.0+cu118
+torchaudio==2.1.0+cu118
+
+# YOLO with GPU support
+ultralytics==8.0.196
+
+# Utilities
+python-docx==1.1.2
+python-dotenv==1.0.0
+
+# Optional: For even faster inference (requires TensorRT installation)
+# onnxruntime-gpu==1.16.0
+# tensorrt==8.6.1
