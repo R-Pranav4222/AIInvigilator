@@ -6,17 +6,6 @@ import numpy as np
 import mysql.connector
 from datetime import datetime
 from ultralytics import YOLO
-import torch
-
-# Import GPU configuration
-try:
-    from gpu_config import gpu_config, DEVICE, USE_HALF_PRECISION
-    GPU_AVAILABLE = True
-except ImportError:
-    print("⚠️ GPU config not found, using CPU")
-    GPU_AVAILABLE = False
-    DEVICE = 'cpu'
-    USE_HALF_PRECISION = False
 
 # If running on the client, import paramiko + scp
 IS_CLIENT = False  # Change to True on client, False on host
@@ -275,27 +264,10 @@ def detect_passing_paper(wrists, keypoints_list):
     return passing_detected, close_pairs
 
 # ========================
-# LOAD MODELS WITH GPU SUPPORT
+# LOAD MODELS
 # ========================
-print("\n" + "="*60)
-print("Loading YOLO models...")
-print("="*60)
-
 pose_model = YOLO(POSE_MODEL_PATH)
 mobile_model = YOLO(MOBILE_MODEL_PATH)
-
-# Optimize models for GPU if available
-if GPU_AVAILABLE and gpu_config.device_type == 'cuda':
-    print(f"Optimizing models for GPU ({DEVICE})...")
-    pose_model = gpu_config.optimize_model(pose_model)
-    mobile_model = gpu_config.optimize_model(mobile_model)
-    print("✅ Models loaded and optimized for GPU\n")
-else:
-    print("✅ Models loaded on CPU\n")
-    print("💡 TIP: For GPU acceleration, ensure:")
-    print("   1. NVIDIA GPU is available")
-    print("   2. CUDA toolkit is installed")
-    print("   3. Install GPU-enabled PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu118\n")
 
 # ========================
 # VIDEO SOURCE
@@ -303,11 +275,6 @@ else:
 cap = cv2.VideoCapture(CAMERA_INDEX if USE_CAMERA else VIDEO_PATH)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-# Optimize video capture for better performance
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer size for lower latency
-if USE_CAMERA:
-    cap.set(cv2.CAP_PROP_FPS, 30)  # Set camera FPS
 
 # ========================
 # PER-EVENT STATE VARIABLES
@@ -347,33 +314,12 @@ hand_raise_video = None
 # ========================
     
 try:  
-# ========================
-# MAIN LOOP
-# ========================
-if __name__ == "__main__":
-    print("\n🎥 Starting camera monitoring...")
-    print("Press 'q' to quit\n")
-    
-    # FPS calculation variables
-    import time
-    fps_start_time = time.time()
-    fps_frame_count = 0
-    fps_display = 0
-    
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
         frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
-        
-        # Calculate FPS
-        fps_frame_count += 1
-        if fps_frame_count >= 30:
-            fps_end_time = time.time()
-            fps_display = fps_frame_count / (fps_end_time - fps_start_time)
-            fps_start_time = time.time()
-            fps_frame_count = 0
 
         # Overlay: date/time and lecture hall info
         now = datetime.now()
@@ -391,23 +337,8 @@ if __name__ == "__main__":
         cv2.putText(frame, hall_text, (50, FRAME_HEIGHT - 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2, cv2.LINE_AA)
 
-        # ========================================
-        # GPU-ACCELERATED YOLO POSE INFERENCE
-        # ========================================
-        with torch.no_grad():  # Disable gradient calculation for inference
-            if GPU_AVAILABLE and gpu_config.device_type == 'cuda':
-                # GPU inference with optimizations
-                results = pose_model(
-                    frame,
-                    device=DEVICE,
-                    half=USE_HALF_PRECISION,
-                    verbose=False,
-                    imgsz=640,  # Can reduce to 416 or 320 for even faster inference
-                    conf=0.5
-                )
-            else:
-                # CPU inference
-                results = pose_model(frame)
+        # YOLO pose inference for leaning & passing paper
+        results = pose_model(frame)
 
         # 1) Leaning Detection (process each person's keypoints)
         leaning_this_frame = False
@@ -708,25 +639,9 @@ if __name__ == "__main__":
         if hand_raise_in_progress and hand_raise_recording and hand_raise_video:
             hand_raise_video.write(frame)
 
-        # ========================================
-        # GPU-ACCELERATED MOBILE DETECTION
-        # ========================================
+        # 8) MOBILE PHONE DETECTION
         try:
-            with torch.no_grad():  # Disable gradient calculation
-                if GPU_AVAILABLE and gpu_config.device_type == 'cuda':
-                    # GPU inference for mobile detection
-                    mobile_results = mobile_model(
-                        frame,
-                        device=DEVICE,
-                        half=USE_HALF_PRECISION,
-                        verbose=False,
-                        classes=[67],  # Mobile phone class ID
-                        imgsz=640,
-                        conf=0.5
-                    )
-                else:
-                    # CPU inference
-                    mobile_results = mobile_model(frame)
+            mobile_results = mobile_model(frame)
         except Exception as e:
             print("Mobile detection error:", e)
             mobile_results = []
@@ -793,29 +708,6 @@ if __name__ == "__main__":
                 mobile_frames = 0
                 mobile_recording = False
                 mobile_video = None
-
-        # ========================================
-        # DISPLAY FPS AND GPU INFO
-        # ========================================
-        # FPS Counter
-        cv2.putText(frame, f"FPS: {fps_display:.1f}", (FRAME_WIDTH - 200, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        # GPU/CPU indicator
-        device_text = "GPU" if GPU_AVAILABLE and gpu_config.device_type == 'cuda' else "CPU"
-        device_color = (0, 255, 0) if device_text == "GPU" else (0, 165, 255)
-        cv2.putText(frame, f"Device: {device_text}", (FRAME_WIDTH - 200, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, device_color, 2)
-        
-        # GPU Memory usage (if GPU)
-        if GPU_AVAILABLE and gpu_config.device_type == 'cuda':
-            try:
-                mem_stats = gpu_config.get_memory_stats()
-                mem_text = f"GPU: {mem_stats['allocated']:.1f}GB"
-                cv2.putText(frame, mem_text, (FRAME_WIDTH - 200, 100),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            except:
-                pass
 
         # 9) Display the frame and check for quit key
         cv2.imshow("Exam Monitoring - All Actions (Leaning, Turning, Hand Raise, Passing, Mobile)", frame)
