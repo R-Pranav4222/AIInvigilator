@@ -374,6 +374,96 @@ def delete_malpractice(request, log_id):
         return JsonResponse({'success': False, 'error': 'Internal server error'}, status=500)
 
 
+@login_required
+@user_passes_test(is_admin)
+def delete_all_logs(request):
+    """
+    Delete all malpractice logs (Admin only)
+    """
+    if request.method == 'POST':
+        try:
+            # Get all logs
+            all_logs = MalpraticeDetection.objects.all()
+            count = all_logs.count()
+            
+            # Delete all video files
+            for log in all_logs:
+                if log.proof:
+                    video_path = os.path.join(settings.MEDIA_ROOT, log.proof)
+                    if os.path.exists(video_path):
+                        try:
+                            os.remove(video_path)
+                        except Exception as e:
+                            print(f"[WARN] Could not delete video file {log.proof}: {e}")
+            
+            # Delete all logs from database
+            all_logs.delete()
+            
+            messages.success(request, f'Successfully deleted {count} malpractice log(s).')
+            return redirect('malpractice_log')
+            
+        except Exception as e:
+            print(f"[EXCEPTION] Error deleting all logs: {e}")
+            messages.error(request, 'An error occurred while deleting logs.')
+            return redirect('malpractice_log')
+    
+    return redirect('malpractice_log')
+
+
+@login_required
+@user_passes_test(is_admin)
+def delete_selected_logs(request):
+    """
+    Delete selected malpractice logs (Admin only)
+    """
+    if request.method == 'POST':
+        try:
+            # Get the comma-separated list of log IDs
+            log_ids_str = request.POST.get('log_ids', '')
+            
+            if not log_ids_str:
+                messages.warning(request, 'No logs selected for deletion.')
+                return redirect('malpractice_log')
+            
+            # Convert to list of integers
+            log_ids = [int(id_str.strip()) for id_str in log_ids_str.split(',') if id_str.strip()]
+            
+            if not log_ids:
+                messages.warning(request, 'No valid logs selected for deletion.')
+                return redirect('malpractice_log')
+            
+            # Get the selected logs
+            selected_logs = MalpraticeDetection.objects.filter(id__in=log_ids)
+            count = selected_logs.count()
+            
+            # Delete video files for selected logs
+            for log in selected_logs:
+                if log.proof:
+                    video_path = os.path.join(settings.MEDIA_ROOT, log.proof)
+                    if os.path.exists(video_path):
+                        try:
+                            os.remove(video_path)
+                        except Exception as e:
+                            print(f"[WARN] Could not delete video file {log.proof}: {e}")
+            
+            # Delete selected logs from database
+            selected_logs.delete()
+            
+            messages.success(request, f'Successfully deleted {count} selected malpractice log(s).')
+            return redirect('malpractice_log')
+            
+        except ValueError as e:
+            print(f"[ERROR] Invalid log IDs: {e}")
+            messages.error(request, 'Invalid log IDs provided.')
+            return redirect('malpractice_log')
+        except Exception as e:
+            print(f"[EXCEPTION] Error deleting selected logs: {e}")
+            messages.error(request, 'An error occurred while deleting selected logs.')
+            return redirect('malpractice_log')
+    
+    return redirect('malpractice_log')
+
+
 
 @login_required
 @user_passes_test(is_admin)

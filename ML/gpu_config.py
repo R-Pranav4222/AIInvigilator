@@ -88,10 +88,9 @@ class GPUConfig:
             # Move model to device
             model.to(self.device)
             
-            # Enable half precision for faster inference
-            if self.half_precision and self.device_type == 'cuda':
-                model.half()
-                print(f"✅ Model converted to FP16 for faster inference")
+            # Don't convert model to half precision here
+            # YOLO models handle FP16 conversion internally when half=True is passed during inference
+            print(f"✅ Model loaded on {self.device}")
             
             return model
         except Exception as e:
