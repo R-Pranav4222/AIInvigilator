@@ -7,6 +7,8 @@ import mysql.connector
 from datetime import datetime
 from ultralytics import YOLO
 import torch
+import threading
+from queue import Queue
 
 # Import GPU configuration
 try:
@@ -116,6 +118,34 @@ else:
     )
 
 cursor = db.cursor()
+
+# ========================
+# VIDEO CONVERSION (for browser compatibility)
+# ========================
+import subprocess
+
+def convert_to_browser_compatible(input_path, output_path):
+    """
+    Convert video to H.264 codec for browser compatibility using ffmpeg.
+    """
+    try:
+        # Use ffmpeg to convert to H.264 with fast preset
+        cmd = [
+            'ffmpeg', '-y', '-i', input_path,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+            '-pix_fmt', 'yuv420p',  # Required for browser compatibility
+            '-movflags', '+faststart',  # Enables progressive download
+            output_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            return True
+        else:
+            print(f"⚠️ FFmpeg conversion failed: {result.stderr}")
+            return False
+    except Exception as e:
+        print(f"⚠️ Video conversion error: {e}")
+        return False
 
 # ========================
 # HELPER FUNCTIONS
@@ -358,11 +388,24 @@ if USE_CAMERA:
     cap.set(cv2.CAP_PROP_FPS, 30)  # Set camera FPS
 else:
     # Video file optimizations for maximum FPS
-    if USE_FAST_VIDEO_CODEC:
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Fast codec
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)  # Larger buffer for video files
-    # Enable hardware acceleration if available
-    cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
+    print("\n🎬 Video file mode - enabling optimizations...")
+    
+    # Try NVIDIA GPU hardware decoding (NVDEC)
+    cap.release()
+    cap = cv2.VideoCapture(VIDEO_PATH, cv2.CAP_FFMPEG)
+    
+    # Enable hardware acceleration
+    if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+        print("   ✅ CUDA available - enabling GPU video decoding")
+        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_D3D11)
+        cap.set(cv2.CAP_PROP_HW_DEVICE, 0)  # Use first GPU
+    else:
+        print("   ⚠️ CUDA not available for video decoding, using CPU")
+        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
+    
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)  # Larger buffer for smoother reading
+    print(f"   📊 Video FPS: {cap.get(cv2.CAP_PROP_FPS):.1f}")
+    print(f"   📐 Resolution: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}")
 
 # ========================
 # PER-EVENT STATE VARIABLES
@@ -426,11 +469,12 @@ try:
 
         # Optional frame resizing for faster processing
         if RESIZE_FRAME and not USE_CAMERA:
-            frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
+            frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT), interpolation=cv2.INTER_NEAREST)
             working_width = RESIZE_WIDTH
             working_height = RESIZE_HEIGHT
         else:
-            frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+            # Fast resize for video files (CPU is faster than GPU for resize due to transfer overhead)
+            frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT), interpolation=cv2.INTER_LINEAR)
             working_width = FRAME_WIDTH
             working_height = FRAME_HEIGHT
         
@@ -598,7 +642,7 @@ try:
                 lean_frames = 1
                 if not lean_recording and not DISABLE_VIDEO_WRITE:
                     lean_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
                     lean_video = cv2.VideoWriter("output_leaning.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
             else:
                 lean_frames += 1
@@ -621,7 +665,9 @@ try:
                     local_temp = "output_leaning.mp4"
                     proof_filename = f"output_leaning_{timestamp}.mp4"
                     dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    shutil.copy(local_temp, dest_path)
+                    # Convert to browser-compatible H.264 format
+                    if not convert_to_browser_compatible(local_temp, dest_path):
+                        shutil.copy(local_temp, dest_path)  # Fallback to copy
                     if IS_CLIENT:
                         remote_dest = f"./AIInvigilator/media/{proof_filename}"
                         scp.put(local_temp, remote_dest)
@@ -651,7 +697,7 @@ try:
                 passing_frames = 1
                 if not passing_recording:
                     passing_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
                     passing_video = cv2.VideoWriter("output_passingpaper.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
             else:
                 passing_frames += 1
@@ -674,7 +720,9 @@ try:
                     local_temp = "output_passingpaper.mp4"
                     proof_filename = f"output_passingpaper_{timestamp}.mp4"
                     dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    shutil.copy(local_temp, dest_path)
+                    # Convert to browser-compatible H.264 format
+                    if not convert_to_browser_compatible(local_temp, dest_path):
+                        shutil.copy(local_temp, dest_path)  # Fallback to copy
                     if IS_CLIENT:
                         remote_dest = f"./AIInvigilator/media/{proof_filename}"
                         scp.put(local_temp, remote_dest)
@@ -704,7 +752,7 @@ try:
                 turning_frames = 1
                 if not turning_recording:
                     turning_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
                     turning_video = cv2.VideoWriter("output_turningback.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
             else:
                 turning_frames += 1
@@ -727,7 +775,9 @@ try:
                     local_temp = "output_turningback.mp4"
                     proof_filename = f"output_turningback_{timestamp}.mp4"
                     dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    shutil.copy(local_temp, dest_path)
+                    # Convert to browser-compatible H.264 format
+                    if not convert_to_browser_compatible(local_temp, dest_path):
+                        shutil.copy(local_temp, dest_path)  # Fallback to copy
                     if IS_CLIENT:
                         remote_dest = f"./AIInvigilator/media/{proof_filename}"
                         scp.put(local_temp, remote_dest)
@@ -757,7 +807,7 @@ try:
                 hand_raise_frames = 1
                 if not hand_raise_recording:
                     hand_raise_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
                     hand_raise_video = cv2.VideoWriter("output_handraise.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
             else:
                 hand_raise_frames += 1
@@ -780,7 +830,9 @@ try:
                     local_temp = "output_handraise.mp4"
                     proof_filename = f"output_handraise_{timestamp}.mp4"
                     dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    shutil.copy(local_temp, dest_path)
+                    # Convert to browser-compatible H.264 format
+                    if not convert_to_browser_compatible(local_temp, dest_path):
+                        shutil.copy(local_temp, dest_path)  # Fallback to copy
                     if IS_CLIENT:
                         remote_dest = f"./AIInvigilator/media/{proof_filename}"
                         scp.put(local_temp, remote_dest)
@@ -854,7 +906,7 @@ try:
                 mobile_frames = 1
                 if not mobile_recording:
                     mobile_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"avc1")  # H.264 codec
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
                     mobile_video = cv2.VideoWriter("output_mobiledetection.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
             else:
                 mobile_frames += 1
@@ -881,7 +933,9 @@ try:
                     hall_id = row[0] if row else None
                     local_temp = "output_mobiledetection.mp4"
                     dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    shutil.copy(local_temp, dest_path)
+                    # Convert to browser-compatible H.264 format
+                    if not convert_to_browser_compatible(local_temp, dest_path):
+                        shutil.copy(local_temp, dest_path)  # Fallback to copy
                     if IS_CLIENT:
                         remote_dest = f"./AIInvigilator/media/{proof_filename}"
                         scp.put(local_temp, remote_dest)

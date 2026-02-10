@@ -429,7 +429,7 @@
             <th scope="col">Download</th>
             <th scope="col">Delete</th>
             {% if is_admin %}
-            <th scope="col">Review Malpractice</th>
+            <th scope="col">{% if review_filter == 'reviewed' %}Reviewed Malpractice{% else %}Review Malpractice{% endif %}</th>
             {% endif %}
           </tr>
         </thead>
