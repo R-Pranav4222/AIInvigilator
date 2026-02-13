@@ -55,9 +55,19 @@ FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
 # Pose model for leaning and passing detection
-POSE_MODEL_PATH = "yolov8n-pose.pt"
-# Mobile model (for mobile phone detection)
-MOBILE_MODEL_PATH = "yolo11n.pt"
+try:
+    import model_config
+    _paths = model_config.get_model_paths()
+    POSE_MODEL_PATH = _paths["pose_detection"]
+    MOBILE_MODEL_PATH = _paths["object_detection"]
+    MOBILE_CLASS_ID = _paths.get("mobile_class_id", 67) # Default to 67 (COCO) if not found
+    print(f"✅ Loaded Model Config: {_paths.get('description', 'Unknown')}")
+    print(f"✅ Tracking Mobile Class ID: {MOBILE_CLASS_ID}")
+except ImportError:
+    print("⚠️ model_config not found, using default hardcoded paths")
+    POSE_MODEL_PATH = "yolov8n-pose.pt"
+    MOBILE_MODEL_PATH = "yolo11n.pt"
+    MOBILE_CLASS_ID = 67
 
 MEDIA_DIR = "../media/"
 
@@ -76,9 +86,16 @@ RESIZE_HEIGHT = 360  # Height for resized frames (if RESIZE_FRAME=True)
 # Thresholds for events
 LEANING_THRESHOLD = 3      # consecutive frames needed for leaning
 PASSING_THRESHOLD = 3      # consecutive frames needed for passing paper
-MOBILE_THRESHOLD = 3       # consecutive frames needed for mobile phone detection
+MOBILE_THRESHOLD = 5       # consecutive frames needed for mobile phone detection
+MOBILE_GRACE_PERIOD = 60   # Frames to keep recording after mobile is lost (approx 2 sec)
 TURNING_THRESHOLD = 3      # consecutive frames needed for turning back
 HAND_RAISE_THRESHOLD = 5   # consecutive frames needed for hand raise
+
+# Grace periods for other actions
+LEANING_GRACE_PERIOD = 60
+PASSING_GRACE_PERIOD = 60
+TURNING_GRACE_PERIOD = 60
+HAND_RAISE_GRACE_PERIOD = 60
 
 # Action strings
 LEANING_ACTION = "Leaning"
@@ -129,20 +146,39 @@ def convert_to_browser_compatible(input_path, output_path):
     Convert video to H.264 codec for browser compatibility using ffmpeg.
     """
     try:
+        # Resolve full absolute paths to avoid issues with CWD
+        abs_input = os.path.abspath(input_path)
+        abs_output = os.path.abspath(output_path)
+        
+        # Verify input file exists
+        if not os.path.exists(abs_input):
+            print(f"⚠️ Input video file not found: {abs_input}")
+            return False
+
         # Use ffmpeg to convert to H.264 with fast preset
         cmd = [
-            'ffmpeg', '-y', '-i', input_path,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
-            '-pix_fmt', 'yuv420p',  # Required for browser compatibility
-            '-movflags', '+faststart',  # Enables progressive download
-            output_path
+            'ffmpeg', '-y', '-i', abs_input,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            abs_output
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        
+        # Increase timeout just in case
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        
         if result.returncode == 0:
             return True
         else:
-            print(f"⚠️ FFmpeg conversion failed: {result.stderr}")
+            print(f"⚠️ FFmpeg conversion failed (Code {result.returncode}):\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
             return False
+            
+    except subprocess.TimeoutExpired:
+        print(f"⚠️ FFmpeg conversion timed out after 120s")
+        return False
+    except FileNotFoundError:
+        print("⚠️ FFmpeg not found in system PATH. Cannot convert video.")
+        return False
     except Exception as e:
         print(f"⚠️ Video conversion error: {e}")
         return False
@@ -229,16 +265,20 @@ def is_hand_raised(keypoints):
     # Get shoulders (5,6), elbows (7,8), wrists (9,10)
     l_shoulder, r_shoulder, l_elbow, r_elbow, l_wrist, r_wrist = keypoints[5:11]
     
-    # Check if all required keypoints are visible
-    if any(pt is None or pt[0] == 0.0 for pt in [l_shoulder, r_shoulder, l_elbow, r_elbow, l_wrist, r_wrist]):
-        return False
+    # We only need one valid arm (shoulder + wrist) to detect a hand raise
+    # Check Left Arm
+    left_arm_valid = all(pt is not None and pt[0] != 0.0 for pt in [l_shoulder, l_wrist])
+    if left_arm_valid:
+        # Threshold: wrist significantly above shoulder (smaller Y value)
+        # Using -20 ensures it's actually raised, not just resting at shoulder level
+        if l_wrist[1] < (l_shoulder[1] - 20):
+            return True
 
-    # Shoulder height threshold (30 pixels above shoulder)
-    threshold = min(l_shoulder[1], r_shoulder[1]) + 30
-
-    # If either wrist is above shoulder threshold, hand is raised
-    if l_wrist[1] < threshold or r_wrist[1] < threshold:
-        return True
+    # Check Right Arm
+    right_arm_valid = all(pt is not None and pt[0] != 0.0 for pt in [r_shoulder, r_wrist])
+    if right_arm_valid:
+        if r_wrist[1] < (r_shoulder[1] - 20):
+            return True
     
     return False
 
@@ -413,30 +453,35 @@ else:
 # Leaning detection states
 lean_in_progress = False
 lean_frames = 0
+lean_grace_frames = 0
 lean_recording = False
 lean_video = None
 
 # Passing paper detection states
 passing_in_progress = False
 passing_frames = 0
+passing_grace_frames = 0
 passing_recording = False
 passing_video = None
 
 # Mobile phone detection states
 mobile_in_progress = False
 mobile_frames = 0
+mobile_grace_frames = 0  # Counter for frames since mobile was last seen
 mobile_recording = False
 mobile_video = None
 
 # Turning back detection states
 turning_in_progress = False
 turning_frames = 0
+turning_grace_frames = 0
 turning_recording = False
 turning_video = None
 
 # Hand raise detection states
 hand_raise_in_progress = False
 hand_raise_frames = 0
+hand_raise_grace_frames = 0
 hand_raise_recording = False
 hand_raise_video = None
 
@@ -637,53 +682,74 @@ try:
 
         # 4) Update leaning event states
         if leaning_this_frame:
+            lean_grace_frames = 0
             if not lean_in_progress:
                 lean_in_progress = True
                 lean_frames = 1
+                # Use mp4v codec (more reliable, no OpenH264 dependency)
+                # FFmpeg will convert to H.264 later for browser compatibility
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                    
                 if not lean_recording and not DISABLE_VIDEO_WRITE:
                     lean_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
                     lean_video = cv2.VideoWriter("output_leaning.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not lean_video.isOpened():
+                        print("[ERROR] Failed to initialize lean_video writer")
+                        lean_video = None
+                        lean_recording = False
             else:
                 lean_frames += 1
         else:
             if lean_in_progress:
-                lean_in_progress = False
-                if lean_frames >= LEANING_THRESHOLD:
-                    if lean_recording and lean_video and not DISABLE_VIDEO_WRITE:
-                        lean_video.release()
-                    now_save = datetime.now()
-                    date_db = now_save.date().isoformat()
-                    time_db = now_save.time().strftime('%H:%M:%S')
-                    cursor.execute(
-                        "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
-                        (LECTURE_HALL_NAME, BUILDING)
-                    )
-                    row = cursor.fetchone()
-                    hall_id = row[0] if row else None
-                    timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
-                    local_temp = "output_leaning.mp4"
-                    proof_filename = f"output_leaning_{timestamp}.mp4"
-                    dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    # Convert to browser-compatible H.264 format
-                    if not convert_to_browser_compatible(local_temp, dest_path):
-                        shutil.copy(local_temp, dest_path)  # Fallback to copy
-                    if IS_CLIENT:
-                        remote_dest = f"./AIInvigilator/media/{proof_filename}"
-                        scp.put(local_temp, remote_dest)
-                    sql = """
-                        INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """
-                    val = (date_db, time_db, LEANING_ACTION, proof_filename, hall_id, False)
-                    cursor.execute(sql, val)
-                    db.commit()
+                lean_grace_frames += 1
+                if lean_grace_frames < LEANING_GRACE_PERIOD:
+                    # Keep alive
+                    pass
                 else:
-                    if lean_recording and lean_video:
-                        lean_video.release()
-                    if os.path.exists("output_leaning.mp4"):
-                        os.remove("output_leaning.mp4")
+                    lean_in_progress = False
+                    if lean_frames >= LEANING_THRESHOLD:
+                        if lean_recording and lean_video and not DISABLE_VIDEO_WRITE:
+                            lean_video.release()
+                            lean_video = None  # Ensure fully released
+                            import time; time.sleep(0.5)  # Wait for file to close
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_leaning.mp4"
+                        proof_filename = f"output_leaning_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        # Convert to browser-compatible H.264 format
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)  # Fallback to copy
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, LEANING_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                    else:
+                        if lean_recording and lean_video:
+                            lean_video.release()
+                        if os.path.exists("output_leaning.mp4"):
+                            os.remove("output_leaning.mp4")
+                    lean_frames = 0
+                    lean_grace_frames = 0
+                    lean_recording = False
+                    lean_video = None
+            else:
                 lean_frames = 0
+                lean_grace_frames = 0
                 lean_recording = False
                 lean_video = None
 
@@ -692,53 +758,71 @@ try:
 
         # 5) Update passing paper event states
         if passing_this_frame:
+            passing_grace_frames = 0
             if not passing_in_progress:
                 passing_in_progress = True
                 passing_frames = 1
                 if not passing_recording:
                     passing_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
+                    # Use mp4v codec (more reliable, no OpenH264 dependency)
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     passing_video = cv2.VideoWriter("output_passingpaper.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not passing_video.isOpened():
+                        print("[ERROR] Failed to initialize passing_video writer")
+                        passing_video = None
+                        passing_recording = False
             else:
                 passing_frames += 1
         else:
             if passing_in_progress:
-                passing_in_progress = False
-                if passing_frames >= PASSING_THRESHOLD:
-                    if passing_recording and passing_video:
-                        passing_video.release()
-                    now_save = datetime.now()
-                    date_db = now_save.date().isoformat()
-                    time_db = now_save.time().strftime('%H:%M:%S')
-                    cursor.execute(
-                        "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
-                        (LECTURE_HALL_NAME, BUILDING)
-                    )
-                    row = cursor.fetchone()
-                    hall_id = row[0] if row else None
-                    timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
-                    local_temp = "output_passingpaper.mp4"
-                    proof_filename = f"output_passingpaper_{timestamp}.mp4"
-                    dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    # Convert to browser-compatible H.264 format
-                    if not convert_to_browser_compatible(local_temp, dest_path):
-                        shutil.copy(local_temp, dest_path)  # Fallback to copy
-                    if IS_CLIENT:
-                        remote_dest = f"./AIInvigilator/media/{proof_filename}"
-                        scp.put(local_temp, remote_dest)
-                    sql = """
-                        INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """
-                    val = (date_db, time_db, PASSING_ACTION, proof_filename, hall_id, False)
-                    cursor.execute(sql, val)
-                    db.commit()
+                passing_grace_frames += 1
+                if passing_grace_frames < PASSING_GRACE_PERIOD:
+                    pass
                 else:
-                    if passing_recording and passing_video:
-                        passing_video.release()
-                    if os.path.exists("output_passingpaper.mp4"):
-                        os.remove("output_passingpaper.mp4")
+                    passing_in_progress = False
+                    if passing_frames >= PASSING_THRESHOLD:
+                        if passing_recording and passing_video:
+                            passing_video.release()
+                            passing_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_passingpaper.mp4"
+                        proof_filename = f"output_passingpaper_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        # Convert to browser-compatible H.264 format
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)  # Fallback to copy
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, PASSING_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                    else:
+                        if passing_recording and passing_video:
+                            passing_video.release()
+                        if os.path.exists("output_passingpaper.mp4"):
+                            os.remove("output_passingpaper.mp4")
+                    passing_frames = 0
+                    passing_grace_frames = 0
+                    passing_recording = False
+                    passing_video = None
+            else:
                 passing_frames = 0
+                passing_grace_frames = 0
                 passing_recording = False
                 passing_video = None
 
@@ -747,53 +831,71 @@ try:
 
         # 6) Update turning back event states
         if turning_this_frame:
+            turning_grace_frames = 0
             if not turning_in_progress:
                 turning_in_progress = True
                 turning_frames = 1
                 if not turning_recording:
                     turning_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
+                    # Use mp4v codec (more reliable, no OpenH264 dependency)
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     turning_video = cv2.VideoWriter("output_turningback.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not turning_video.isOpened():
+                        print("[ERROR] Failed to initialize turning_video writer")
+                        turning_video = None
+                        turning_recording = False
             else:
                 turning_frames += 1
         else:
             if turning_in_progress:
-                turning_in_progress = False
-                if turning_frames >= TURNING_THRESHOLD:
-                    if turning_recording and turning_video:
-                        turning_video.release()
-                    now_save = datetime.now()
-                    date_db = now_save.date().isoformat()
-                    time_db = now_save.time().strftime('%H:%M:%S')
-                    cursor.execute(
-                        "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
-                        (LECTURE_HALL_NAME, BUILDING)
-                    )
-                    row = cursor.fetchone()
-                    hall_id = row[0] if row else None
-                    timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
-                    local_temp = "output_turningback.mp4"
-                    proof_filename = f"output_turningback_{timestamp}.mp4"
-                    dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    # Convert to browser-compatible H.264 format
-                    if not convert_to_browser_compatible(local_temp, dest_path):
-                        shutil.copy(local_temp, dest_path)  # Fallback to copy
-                    if IS_CLIENT:
-                        remote_dest = f"./AIInvigilator/media/{proof_filename}"
-                        scp.put(local_temp, remote_dest)
-                    sql = """
-                        INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """
-                    val = (date_db, time_db, TURNING_ACTION, proof_filename, hall_id, False)
-                    cursor.execute(sql, val)
-                    db.commit()
+                turning_grace_frames += 1
+                if turning_grace_frames < TURNING_GRACE_PERIOD:
+                    pass
                 else:
-                    if turning_recording and turning_video:
-                        turning_video.release()
-                    if os.path.exists("output_turningback.mp4"):
-                        os.remove("output_turningback.mp4")
+                    turning_in_progress = False
+                    if turning_frames >= TURNING_THRESHOLD:
+                        if turning_recording and turning_video:
+                            turning_video.release()
+                            turning_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_turningback.mp4"
+                        proof_filename = f"output_turningback_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        # Convert to browser-compatible H.264 format
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)  # Fallback to copy
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, TURNING_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                    else:
+                        if turning_recording and turning_video:
+                            turning_video.release()
+                        if os.path.exists("output_turningback.mp4"):
+                            os.remove("output_turningback.mp4")
+                    turning_frames = 0
+                    turning_grace_frames = 0
+                    turning_recording = False
+                    turning_video = None
+            else:
                 turning_frames = 0
+                turning_grace_frames = 0
                 turning_recording = False
                 turning_video = None
 
@@ -802,53 +904,71 @@ try:
 
         # 7) Update hand raise event states
         if hand_raise_this_frame:
+            hand_raise_grace_frames = 0
             if not hand_raise_in_progress:
                 hand_raise_in_progress = True
                 hand_raise_frames = 1
                 if not hand_raise_recording:
                     hand_raise_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
+                    # Use mp4v codec (more reliable, no OpenH264 dependency)
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     hand_raise_video = cv2.VideoWriter("output_handraise.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not hand_raise_video.isOpened():
+                        print("[ERROR] Failed to initialize hand_raise_video writer")
+                        hand_raise_video = None
+                        hand_raise_recording = False
             else:
                 hand_raise_frames += 1
         else:
             if hand_raise_in_progress:
-                hand_raise_in_progress = False
-                if hand_raise_frames >= HAND_RAISE_THRESHOLD:
-                    if hand_raise_recording and hand_raise_video:
-                        hand_raise_video.release()
-                    now_save = datetime.now()
-                    date_db = now_save.date().isoformat()
-                    time_db = now_save.time().strftime('%H:%M:%S')
-                    cursor.execute(
-                        "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
-                        (LECTURE_HALL_NAME, BUILDING)
-                    )
-                    row = cursor.fetchone()
-                    hall_id = row[0] if row else None
-                    timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
-                    local_temp = "output_handraise.mp4"
-                    proof_filename = f"output_handraise_{timestamp}.mp4"
-                    dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    # Convert to browser-compatible H.264 format
-                    if not convert_to_browser_compatible(local_temp, dest_path):
-                        shutil.copy(local_temp, dest_path)  # Fallback to copy
-                    if IS_CLIENT:
-                        remote_dest = f"./AIInvigilator/media/{proof_filename}"
-                        scp.put(local_temp, remote_dest)
-                    sql = """
-                        INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """
-                    val = (date_db, time_db, HAND_RAISE_ACTION, proof_filename, hall_id, False)
-                    cursor.execute(sql, val)
-                    db.commit()
+                hand_raise_grace_frames += 1
+                if hand_raise_grace_frames < HAND_RAISE_GRACE_PERIOD:
+                    pass
                 else:
-                    if hand_raise_recording and hand_raise_video:
-                        hand_raise_video.release()
-                    if os.path.exists("output_handraise.mp4"):
-                        os.remove("output_handraise.mp4")
+                    hand_raise_in_progress = False
+                    if hand_raise_frames >= HAND_RAISE_THRESHOLD:
+                        if hand_raise_recording and hand_raise_video:
+                            hand_raise_video.release()
+                            hand_raise_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_handraise.mp4"
+                        proof_filename = f"output_handraise_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        # Convert to browser-compatible H.264 format
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)  # Fallback to copy
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, HAND_RAISE_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                    else:
+                        if hand_raise_recording and hand_raise_video:
+                            hand_raise_video.release()
+                        if os.path.exists("output_handraise.mp4"):
+                            os.remove("output_handraise.mp4")
+                    hand_raise_frames = 0
+                    hand_raise_grace_frames = 0
+                    hand_raise_recording = False
+                    hand_raise_video = None
+            else:
                 hand_raise_frames = 0
+                hand_raise_grace_frames = 0
                 hand_raise_recording = False
                 hand_raise_video = None
 
@@ -867,13 +987,13 @@ try:
                         device=DEVICE,
                         half=USE_HALF_PRECISION,
                         verbose=False,
-                        classes=[67],  # Mobile phone class ID
+                        classes=[MOBILE_CLASS_ID, 67, 77],  # Mobile phone (67) or Cell phone (77 in some datasets)
                         imgsz=640,
-                        conf=0.5
+                        conf=0.20  # Lowered further for back-of-phone detection
                     )
                 else:
                     # CPU inference
-                    mobile_results = mobile_model(frame)
+                    mobile_results = mobile_model(frame, conf=0.20, classes=[MOBILE_CLASS_ID, 67, 77])
         except Exception as e:
             print("Mobile detection error:", e)
             mobile_results = []
@@ -883,7 +1003,7 @@ try:
         for m_res in mobile_results:
             if m_res.boxes is not None:
                 for box in m_res.boxes:
-                    if int(box.cls) == 67:
+                    if int(box.cls) == MOBILE_CLASS_ID:
                         mobile_detected = True
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         mobile_bbox = [x1, y1, x2, y2]
@@ -894,20 +1014,32 @@ try:
         # ========================================
         # HYBRID ML VERIFICATION FOR MOBILE (Reduce False Positives)
         # ========================================
+        # Only use hybrid detector if explicitly enabled and available
         if hybrid_detector is not None and mobile_detected:
-            mobile_verified, mobile_conf, mobile_method = hybrid_detector.detect_mobile_hybrid(
-                frame, cv_detected=True, cv_bbox=mobile_bbox
-            )
-            mobile_detected = mobile_verified
+            # Skip hybrid verification for mobile to improve responsiveness
+            # mobile_verified, mobile_conf, mobile_method = hybrid_detector.detect_mobile_hybrid(
+            #     frame, cv_detected=True, cv_bbox=mobile_bbox
+            # )
+            # mobile_detected = mobile_verified
+            pass
         
         if mobile_detected:
+            # Reset grace frames since we detected it again
+            mobile_grace_frames = 0
+            
             if not mobile_in_progress:
                 mobile_in_progress = True
-                mobile_frames = 1
+                # Start with some frames to be more responsive if threshold is high
+                mobile_frames = 1 
                 if not mobile_recording:
                     mobile_recording = True
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MPEG-4 codec (browser compatible)
+                    # Use mp4v codec (more reliable, no OpenH264 dependency)
+                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     mobile_video = cv2.VideoWriter("output_mobiledetection.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not mobile_video.isOpened():
+                        print("[ERROR] Failed to initialize mobile_video writer")
+                        mobile_video = None
+                        mobile_recording = False
             else:
                 mobile_frames += 1
             cv2.putText(frame, ACTION_MOBILE + "!", (850, 200),
@@ -916,42 +1048,62 @@ try:
                 mobile_video.write(frame)
         else:
             if mobile_in_progress:
-                mobile_in_progress = False
-                if mobile_frames >= MOBILE_THRESHOLD:
-                    if mobile_recording and mobile_video:
-                        mobile_video.release()
-                    now_save = datetime.now()
-                    timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
-                    proof_filename = f"output_mobiledetection_{timestamp}.mp4"
-                    date_db = now_save.date().isoformat()
-                    time_db = now_save.time().strftime('%H:%M:%S')
-                    cursor.execute(
-                        "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
-                        (LECTURE_HALL_NAME, BUILDING)
-                    )
-                    row = cursor.fetchone()
-                    hall_id = row[0] if row else None
-                    local_temp = "output_mobiledetection.mp4"
-                    dest_path = os.path.join(MEDIA_DIR, proof_filename)
-                    # Convert to browser-compatible H.264 format
-                    if not convert_to_browser_compatible(local_temp, dest_path):
-                        shutil.copy(local_temp, dest_path)  # Fallback to copy
-                    if IS_CLIENT:
-                        remote_dest = f"./AIInvigilator/media/{proof_filename}"
-                        scp.put(local_temp, remote_dest)
-                    sql = """
-                        INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """
-                    val = (date_db, time_db, ACTION_MOBILE, proof_filename, hall_id, False)
-                    cursor.execute(sql, val)
-                    db.commit()
+                # Mobile lost, but check if we are in grace period
+                mobile_grace_frames += 1
+                
+                # Continue recording during grace period
+                if mobile_grace_frames < MOBILE_GRACE_PERIOD:
+                     cv2.putText(frame, "Tracking lost... keeping alive", (850, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,165,255), 2)
+                     if mobile_recording and mobile_video and not DISABLE_VIDEO_WRITE:
+                        mobile_video.write(frame)
                 else:
-                    if mobile_recording and mobile_video:
-                        mobile_video.release()
-                    if os.path.exists("output_mobiledetection.mp4"):
-                        os.remove("output_mobiledetection.mp4")
+                    # Grace period expired, stop recording and save if valid
+                    mobile_in_progress = False
+                    if mobile_frames >= MOBILE_THRESHOLD:
+                        if mobile_recording and mobile_video:
+                            mobile_video.release()
+                            mobile_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        proof_filename = f"output_mobiledetection_{timestamp}.mp4"
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        local_temp = "output_mobiledetection.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        # Convert to browser-compatible H.264 format
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)  # Fallback to copy
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, ACTION_MOBILE, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                    else:
+                        if mobile_recording and mobile_video:
+                            mobile_video.release()
+                        if os.path.exists("output_mobiledetection.mp4"):
+                            os.remove("output_mobiledetection.mp4")
+                    mobile_frames = 0
+                    mobile_grace_frames = 0
+                    mobile_recording = False
+                    mobile_video = None
+            else:
+                # Not in progress and not detected, just ensure reset
                 mobile_frames = 0
+                mobile_grace_frames = 0
                 mobile_recording = False
                 mobile_video = None
 

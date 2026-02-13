@@ -3,7 +3,7 @@ from django.shortcuts import render
 from django.shortcuts import redirect
 from .models import *
 from threading import Event, Thread
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse, HttpResponse
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.views.decorators.csrf import csrf_exempt
@@ -23,6 +23,7 @@ from .utils import ssh_run_script, local_run_script
 import threading
 import os
 import subprocess
+import tempfile
 from .utils import RUNNING_SCRIPTS 
 import time
 
@@ -152,6 +153,173 @@ def change_password(request):
         form = PasswordChangeForm(user=request.user)
     return render(request, 'change_password.html', {'form': form})
 
+
+
+@login_required
+def serve_video(request):
+    """Serve proof videos in browser-compatible H.264 format.
+    
+    The ML scripts write videos using OpenCV's mp4v codec (MPEG-4 Part 2),
+    which browsers cannot play inline. This view converts them to H.264
+    using multiple fallback strategies.
+    """
+    filename = request.GET.get('file', '')
+    if not filename:
+        return HttpResponse('No file specified', status=400)
+    
+    # Sanitize filename to prevent directory traversal
+    filename = os.path.basename(filename)
+    video_path = os.path.join(settings.MEDIA_ROOT, filename)
+    
+    if not os.path.exists(video_path):
+        print(f'[serve_video] Video not found: {video_path}')
+        return HttpResponse('Video not found', status=404)
+    
+    print(f'[serve_video] Serving video: {filename}')
+    
+    # Check if a cached H.264 version already exists
+    cache_dir = os.path.join(settings.MEDIA_ROOT, '_h264_cache')
+    os.makedirs(cache_dir, exist_ok=True)
+    cached_path = os.path.join(cache_dir, filename)
+    
+    if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+        print(f'[serve_video] Serving from cache: {cached_path}')
+        return FileResponse(
+            open(cached_path, 'rb'),
+            content_type='video/mp4',
+            filename=filename
+        )
+    
+    # --- Strategy 1: System ffmpeg ---
+    try:
+        print('[serve_video] Trying system ffmpeg...')
+        cmd = [
+            'ffmpeg', '-y', '-i', video_path,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            '-an',  # No audio track
+            cached_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0 and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+            print('[serve_video] ✅ System ffmpeg conversion successful')
+            return FileResponse(
+                open(cached_path, 'rb'),
+                content_type='video/mp4',
+                filename=filename
+            )
+        else:
+            print(f'[serve_video] System ffmpeg failed: {result.stderr[:200] if result.stderr else "unknown error"}')
+    except FileNotFoundError:
+        print('[serve_video] System ffmpeg not found')
+    except subprocess.TimeoutExpired:
+        print('[serve_video] System ffmpeg timed out')
+    except Exception as e:
+        print(f'[serve_video] System ffmpeg error: {e}')
+    
+    # --- Strategy 2: imageio-ffmpeg bundled binary ---
+    try:
+        print('[serve_video] Trying imageio-ffmpeg...')
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        print(f'[serve_video] Found imageio-ffmpeg at: {ffmpeg_exe}')
+        cmd = [
+            ffmpeg_exe, '-y', '-i', video_path,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            '-an',
+            cached_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0 and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+            print('[serve_video] ✅ imageio-ffmpeg conversion successful')
+            return FileResponse(
+                open(cached_path, 'rb'),
+                content_type='video/mp4',
+                filename=filename
+            )
+        else:
+            print(f'[serve_video] imageio-ffmpeg failed: {result.stderr[:200] if result.stderr else "unknown error"}')
+    except ImportError:
+        print('[serve_video] imageio-ffmpeg not installed')
+    except Exception as e:
+        print(f'[serve_video] imageio-ffmpeg error: {e}')
+
+    # --- Strategy 3: OpenCV re-encode with H.264 codec ---
+    try:
+        print('[serve_video] Trying OpenCV H.264 re-encode...')
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print('[serve_video] OpenCV cannot open source video')
+        else:
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            print(f'[serve_video] Source: {width}x{height} @ {fps}fps, {total_frames} frames')
+            
+            # Try H.264 codec variants
+            codec_options = ['avc1', 'H264', 'X264', 'h264']
+            writer = None
+            used_codec = None
+            
+            for codec in codec_options:
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    test_path = cached_path if codec == codec_options[-1] else cached_path
+                    writer = cv2.VideoWriter(test_path, fourcc, fps, (width, height))
+                    if writer.isOpened():
+                        used_codec = codec
+                        print(f'[serve_video] OpenCV codec "{codec}" is available')
+                        break
+                    writer.release()
+                    writer = None
+                    print(f'[serve_video] OpenCV codec "{codec}" not available')
+                except Exception as e:
+                    print(f'[serve_video] OpenCV codec "{codec}" error: {e}')
+                    writer = None
+            
+            if writer and writer.isOpened():
+                frame_count = 0
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    writer.write(frame)
+                    frame_count += 1
+                writer.release()
+                cap.release()
+                print(f'[serve_video] Wrote {frame_count} frames with codec "{used_codec}"')
+                
+                if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                    print(f'[serve_video] ✅ OpenCV re-encode successful ({os.path.getsize(cached_path)} bytes)')
+                    return FileResponse(
+                        open(cached_path, 'rb'),
+                        content_type='video/mp4',
+                        filename=filename
+                    )
+                else:
+                    print('[serve_video] OpenCV output file is empty or missing')
+            else:
+                print('[serve_video] No H.264 codec available in OpenCV')
+            
+            if cap.isOpened():
+                cap.release()
+    except ImportError:
+        print('[serve_video] OpenCV not available')
+    except Exception as e:
+        print(f'[serve_video] OpenCV error: {e}')
+    
+    # --- Strategy 4 (Last resort): Serve original file as-is ---
+    print(f'[serve_video] ⚠️ All conversion methods failed! Serving original mp4v file (may not play in browser)')
+    return FileResponse(
+        open(video_path, 'rb'),
+        content_type='video/mp4',
+        filename=filename
+    )
 
 
 @login_required
@@ -379,15 +547,33 @@ def delete_malpractice(request, log_id):
 def delete_all_logs(request):
     """
     Delete all malpractice logs (Admin only)
+    Can be filtered by review status
     """
     if request.method == 'POST':
         try:
-            # Get all logs
-            all_logs = MalpraticeDetection.objects.all()
-            count = all_logs.count()
+            review_status = request.POST.get('review_status')
             
-            # Delete all video files
-            for log in all_logs:
+            # Base queryset
+            logs_to_delete = MalpraticeDetection.objects.all()
+            
+            # Filter based on review status if provided
+            if review_status == 'reviewed':
+                logs_to_delete = logs_to_delete.filter(verified=True)
+                log_type_msg = "reviewed"
+            elif review_status == 'not_reviewed':
+                logs_to_delete = logs_to_delete.filter(verified=False)
+                log_type_msg = "not reviewed"
+            else:
+                log_type_msg = ""
+                
+            count = logs_to_delete.count()
+            
+            if count == 0:
+                messages.warning(request, f'No {log_type_msg} logs found to delete.')
+                return redirect('malpractice_log')
+
+            # Delete video files
+            for log in logs_to_delete:
                 if log.proof:
                     video_path = os.path.join(settings.MEDIA_ROOT, log.proof)
                     if os.path.exists(video_path):
@@ -396,14 +582,14 @@ def delete_all_logs(request):
                         except Exception as e:
                             print(f"[WARN] Could not delete video file {log.proof}: {e}")
             
-            # Delete all logs from database
-            all_logs.delete()
+            # Delete logs from database
+            logs_to_delete.delete()
             
-            messages.success(request, f'Successfully deleted {count} malpractice log(s).')
+            messages.success(request, f'Successfully deleted {count} {log_type_msg} malpractice log(s).')
             return redirect('malpractice_log')
             
         except Exception as e:
-            print(f"[EXCEPTION] Error deleting all logs: {e}")
+            print(f"[EXCEPTION] Error deleting logs: {e}")
             messages.error(request, 'An error occurred while deleting logs.')
             return redirect('malpractice_log')
     

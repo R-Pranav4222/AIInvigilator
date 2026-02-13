@@ -152,14 +152,17 @@
   }
 
   .my-toggle-wrapper {
-    text-align: center; /* center horizontally */
+    text-align: center;
+    /* center horizontally */
     margin-bottom: 20px;
   }
+
   /* Toggle container */
   .my-toggle {
     position: relative;
     display: inline-block;
-    width: 250px;  /* adjusted for proper text fit */
+    width: 250px;
+    /* adjusted for proper text fit */
     height: 50px;
     background-color: #f0f2f5;
     border: 2px solid #007bff;
@@ -167,6 +170,7 @@
     overflow: hidden;
     cursor: pointer;
   }
+
   /* Label container for the two halves */
   .my-toggle-labels {
     position: absolute;
@@ -179,6 +183,7 @@
     font-weight: 600;
     color: #007bff;
   }
+
   .my-toggle-labels span {
     flex: 1;
     display: flex;
@@ -186,15 +191,18 @@
     justify-content: center;
     transition: color 0.3s ease;
   }
+
   .my-toggle-labels span.active {
     color: #fff;
   }
+
   /* The sliding indicator */
   .my-toggle-slider {
     position: absolute;
     top: 0;
     left: 0;
-    width: 50%; /* exactly half the container */
+    width: 50%;
+    /* exactly half the container */
     height: 100%;
     background-color: #007bff;
     transition: transform 0.3s ease;
@@ -211,16 +219,16 @@
     <h2 class="malpractice-heading">Malpractice Log</h2>
 
     {% if not request.user.is_superuser %}
-      {% if request.user.lecturehall %}
-        <div class="alert alert-success text-center">
-          <strong>Assignment Status:</strong> You are currently assigned to 
-          {{ request.user.lecturehall.building }} - {{ request.user.lecturehall.hall_name }}.
-        </div>
-      {% else %}
-        <div class="alert alert-warning text-center">
-          <strong>Assignment Status:</strong> You haven't been assigned to any classrooms.
-        </div>
-      {% endif %}
+    {% if request.user.lecturehall %}
+    <div class="alert alert-success text-center">
+      <strong>Assignment Status:</strong> You are currently assigned to
+      {{ request.user.lecturehall.building }} - {{ request.user.lecturehall.hall_name }}.
+    </div>
+    {% else %}
+    <div class="alert alert-warning text-center">
+      <strong>Assignment Status:</strong> You haven't been assigned to any classrooms.
+    </div>
+    {% endif %}
     {% endif %}
 
     <!-- FILTER BAR -->
@@ -228,131 +236,130 @@
       <form method="get">
         <input type="hidden" name="review" value="{{ review_filter|default:'not_reviewed' }}">
         {% if request.user.is_superuser %}
-          <!-- ADMIN FILTERS (2 Rows) -->
-          <div class="form-row">
-            <!-- Filter by Date -->
-            <div class="form-group col-md-3">
-              <label for="date">Filter by Date:</label>
-              <input type="date" name="date" id="date" class="form-control" value="{{ date_filter }}">
-            </div>
-            <!-- Filter by Time (FN & AN) -->
-            <div class="form-group col-md-2">
-              <label for="time">Filter by Time:</label>
-              <select name="time" id="time" class="form-control">
-                <option value="">All</option>
-                <option value="FN" {% if time_filter == 'FN' %}selected{% endif %}>FN (Before Noon)</option>
-                <option value="AN" {% if time_filter == 'AN' %}selected{% endif %}>AN (After Noon)</option>
-              </select>
-            </div>
-            <!-- Filter by Malpractice Type -->
-            <div class="form-group col-md-3">
-              <label for="malpractice_type">Malpractice Type:</label>
-              <select name="malpractice_type" id="malpractice_type" class="form-control">
-                <option value="">All Types</option>
-                <option value="Leaning" {% if malpractice_filter == 'Leaning' %}selected{% endif %}>Leaning</option>
-                <option value="Mobile Phone Detected" {% if malpractice_filter == 'Mobile Phone Detected' %}selected{% endif %}>Mobile Phone Detected</option>
-                <option value="Passing Paper" {% if malpractice_filter == 'Passing Paper' %}selected{% endif %}>Passing Paper</option>
-                <option value="Turning Back" {% if malpractice_filter == 'Turning Back' %}selected{% endif %}>Turning Back</option>
-              </select>
-            </div>
-            <!-- Assigned Faculty -->
-            <div class="form-group col-md-4">
-              <label for="faculty">Assigned Faculty:</label>
-              <select name="faculty" id="faculty" class="form-control">
-                <option value="">All Faculty</option>
-                {% for f in faculty_list %}
-                  <option value="{{ f.id }}" 
-                    {% if faculty_filter|stringformat:"s" == f.id|stringformat:"s" %}selected{% endif %}>
-                    {{ f.get_full_name|default:f.username }}
-                  </option>
-                {% endfor %}
-              </select>
-            </div>
+        <!-- ADMIN FILTERS (2 Rows) -->
+        <div class="form-row">
+          <!-- Filter by Date -->
+          <div class="form-group col-md-3">
+            <label for="date">Filter by Date:</label>
+            <input type="date" name="date" id="date" class="form-control" value="{{ date_filter }}">
           </div>
-          <div class="form-row">
-            <!-- Search Lecture Hall -->
-            <div class="form-group col-md-4">
-              <label for="q">Search Lecture Hall:</label>
-              <input type="text" name="q" id="q" class="form-control" 
-                    placeholder="Enter LH name (e.g., LH1)" value="{{ query }}">
-            </div>
-            <!-- Filter by Building -->
-            <div class="form-group col-md-4">
-              <label for="building">Filter by Building:</label>
-              <select name="building" class="form-control" id="building">
-                <option value="">All Buildings</option>
-                {% for b in buildings %}
-                  <option value="{{ b }}" {% if building_filter == b %}selected{% endif %}>{{ b }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <!-- Filter by Assignment -->
-            <div class="form-group col-md-3">
-              <label for="assigned">Filter by Assignment:</label>
-              <select name="assigned" class="form-control" id="assigned">
-                <option value="">All</option>
-                <option value="assigned" {% if assignment_filter == 'assigned' %}selected{% endif %}>Assigned</option>
-                <option value="unassigned" {% if assignment_filter == 'unassigned' %}selected{% endif %}>Unassigned</option>
-              </select>
-            </div>
-            <!-- Apply Button -->
-            <div class="form-group col-md-1 d-flex align-items-end">
-              <button type="submit" class="btn btn-primary w-100">
-                <i class="fas fa-filter"></i>
-              </button>
-            </div>
+          <!-- Filter by Time (FN & AN) -->
+          <div class="form-group col-md-2">
+            <label for="time">Filter by Time:</label>
+            <select name="time" id="time" class="form-control">
+              <option value="">All</option>
+              <option value="FN" {% if time_filter == 'FN' %}selected{% endif %}>FN (Before Noon)</option>
+              <option value="AN" {% if time_filter == 'AN' %}selected{% endif %}>AN (After Noon)</option>
+            </select>
           </div>
+          <!-- Filter by Malpractice Type -->
+          <div class="form-group col-md-3">
+            <label for="malpractice_type">Malpractice Type:</label>
+            <select name="malpractice_type" id="malpractice_type" class="form-control">
+              <option value="">All Types</option>
+              <option value="Leaning" {% if malpractice_filter == 'Leaning' %}selected{% endif %}>Leaning</option>
+              <option value="Mobile Phone Detected" {% if malpractice_filter == 'Mobile Phone Detected' %}selected{% endif %}>Mobile Phone Detected</option>
+              <option value="Passing Paper" {% if malpractice_filter == 'Passing Paper' %}selected{% endif %}>Passing Paper</option>
+              <option value="Turning Back" {% if malpractice_filter == 'Turning Back' %}selected{% endif %}>Turning Back</option>
+            </select>
+          </div>
+          <!-- Assigned Faculty -->
+          <div class="form-group col-md-4">
+            <label for="faculty">Assigned Faculty:</label>
+            <select name="faculty" id="faculty" class="form-control">
+              <option value="">All Faculty</option>
+              {% for f in faculty_list %}
+              <option value="{{ f.id }}" {% if faculty_filter|stringformat:"s" == f.id|stringformat:"s" %}selected{% endif %}>
+                {{ f.get_full_name|default:f.username }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <!-- Search Lecture Hall -->
+          <div class="form-group col-md-4">
+            <label for="q">Search Lecture Hall:</label>
+            <input type="text" name="q" id="q" class="form-control" placeholder="Enter LH name (e.g., LH1)"
+              value="{{ query }}">
+          </div>
+          <!-- Filter by Building -->
+          <div class="form-group col-md-4">
+            <label for="building">Filter by Building:</label>
+            <select name="building" class="form-control" id="building">
+              <option value="">All Buildings</option>
+              {% for b in buildings %}
+              <option value="{{ b }}" {% if building_filter == b %}selected{% endif %}>{{ b }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <!-- Filter by Assignment -->
+          <div class="form-group col-md-3">
+            <label for="assigned">Filter by Assignment:</label>
+            <select name="assigned" class="form-control" id="assigned">
+              <option value="">All</option>
+              <option value="assigned" {% if assignment_filter == 'assigned' %}selected{% endif %}>Assigned</option>
+              <option value="unassigned" {% if assignment_filter == 'unassigned' %}selected{% endif %}>Unassigned</option>
+            </select>
+          </div>
+          <!-- Apply Button -->
+          <div class="form-group col-md-1 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="fas fa-filter"></i>
+            </button>
+          </div>
+        </div>
         {% else %}
-          <!-- TEACHER FILTERS (Single Row) -->
-          <div class="form-row">
-            <!-- Filter by Date -->
-            <div class="form-group col-md-2">
-              <label for="date">Filter by Date:</label>
-              <input type="date" name="date" id="date" class="form-control" value="{{ date_filter }}">
-            </div>
-            <!-- Filter by Time -->
-            <div class="form-group col-md-2">
-              <label for="time">Filter by Time:</label>
-              <select name="time" id="time" class="form-control">
-                <option value="">All</option>
-                <option value="FN" {% if time_filter == 'FN' %}selected{% endif %}>FN</option>
-                <option value="AN" {% if time_filter == 'AN' %}selected{% endif %}>AN</option>
-              </select>
-            </div>
-            <!-- Malpractice Type -->
-            <div class="form-group col-md-2">
-              <label for="malpractice_type">Malpractice:</label>
-              <select name="malpractice_type" id="malpractice_type" class="form-control">
-                <option value="">All Types</option>
-                <option value="Leaning" {% if malpractice_filter == 'Leaning' %}selected{% endif %}>Leaning</option>
-                <option value="Mobile Phone Detected" {% if malpractice_filter == 'Mobile Phone Detected' %}selected{% endif %}>Mobile Phone Detected</option>
-                <option value="Passing Paper" {% if malpractice_filter == 'Passing Paper' %}selected{% endif %}>Passing Paper</option>
-                <option value="Turning Back" {% if malpractice_filter == 'Turning Back' %}selected{% endif %}>Turning Back</option>
-              </select>
-            </div>
-            <!-- Building -->
-            <div class="form-group col-md-2">
-              <label for="building">Building:</label>
-              <select name="building" class="form-control" id="building">
-                <option value="">All</option>
-                {% for b in buildings %}
-                  <option value="{{ b }}" {% if building_filter == b %}selected{% endif %}>{{ b }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <!-- Lecture Hall Search -->
-            <div class="form-group col-md-3">
-              <label for="q">Lecture Hall:</label>
-              <input type="text" name="q" id="q" class="form-control" 
-                    placeholder="Enter LH name (e.g., LH1)" value="{{ query }}">
-            </div>
-            <!-- Apply Button -->
-            <div class="form-group col-md-1 d-flex align-items-end">
-              <button type="submit" class="btn btn-primary w-100">
-                <i class="fas fa-filter"></i>
-              </button>
-            </div>
+        <!-- TEACHER FILTERS (Single Row) -->
+        <div class="form-row">
+          <!-- Filter by Date -->
+          <div class="form-group col-md-2">
+            <label for="date">Filter by Date:</label>
+            <input type="date" name="date" id="date" class="form-control" value="{{ date_filter }}">
           </div>
+          <!-- Filter by Time -->
+          <div class="form-group col-md-2">
+            <label for="time">Filter by Time:</label>
+            <select name="time" id="time" class="form-control">
+              <option value="">All</option>
+              <option value="FN" {% if time_filter == 'FN' %}selected{% endif %}>FN</option>
+              <option value="AN" {% if time_filter == 'AN' %}selected{% endif %}>AN</option>
+            </select>
+          </div>
+          <!-- Malpractice Type -->
+          <div class="form-group col-md-2">
+            <label for="malpractice_type">Malpractice:</label>
+            <select name="malpractice_type" id="malpractice_type" class="form-control">
+              <option value="">All Types</option>
+              <option value="Leaning" {% if malpractice_filter == 'Leaning' %}selected{% endif %}>Leaning</option>
+              <option value="Mobile Phone Detected" {% if malpractice_filter == 'Mobile Phone Detected' %}selected{% endif %}>Mobile Phone Detected</option>
+              <option value="Passing Paper" {% if malpractice_filter == 'Passing Paper' %}selected{% endif %}>Passing Paper</option>
+              <option value="Turning Back" {% if malpractice_filter == 'Turning Back' %}selected{% endif %}>Turning Back</option>
+            </select>
+          </div>
+          <!-- Building -->
+          <div class="form-group col-md-2">
+            <label for="building">Building:</label>
+            <select name="building" class="form-control" id="building">
+              <option value="">All</option>
+              {% for b in buildings %}
+              <option value="{{ b }}" {% if building_filter == b %}selected{% endif %}>{{ b }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <!-- Lecture Hall Search -->
+          <div class="form-group col-md-3">
+            <label for="q">Lecture Hall:</label>
+            <input type="text" name="q" id="q" class="form-control" placeholder="Enter LH name (e.g., LH1)"
+              value="{{ query }}">
+          </div>
+          <!-- Apply Button -->
+          <div class="form-group col-md-1 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="fas fa-filter"></i>
+            </button>
+          </div>
+        </div>
         {% endif %}
       </form>
     </div>
@@ -361,54 +368,56 @@
     <!-- Review Toggle Switch -->
     <!-- Review Toggle Switch -->
     {% if request.user.is_superuser %}
-      <div class="my-toggle-wrapper">
-        <div class="my-toggle" id="reviewToggle">
-          <div class="my-toggle-slider" id="reviewSlider"></div>
-          <div class="my-toggle-labels">
-            <span id="labelNotReviewed" class="{% if review_filter|default:'not_reviewed' == 'not_reviewed' %}active{% endif %}">
-              Not Reviewed
-            </span>
-            <span id="labelReviewed" class="{% if review_filter == 'reviewed' %}active{% endif %}">
-              Reviewed
-            </span>
-          </div>
+    <div class="my-toggle-wrapper">
+      <div class="my-toggle" id="reviewToggle">
+        <div class="my-toggle-slider" id="reviewSlider"></div>
+        <div class="my-toggle-labels">
+          <span id="labelNotReviewed"
+            class="{% if review_filter|default:'not_reviewed' == 'not_reviewed' %}active{% endif %}">
+            Not Reviewed
+          </span>
+          <span id="labelReviewed" class="{% if review_filter == 'reviewed' %}active{% endif %}">
+            Reviewed
+          </span>
         </div>
       </div>
+    </div>
     {% endif %}
 
     <!-- Delete Logs Options (Admin Only) -->
     {% if request.user.is_superuser %}
-      <div class="text-right mb-3">
-        <div class="btn-group">
-          <button type="button" class="btn btn-danger dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-            <i class="fas fa-trash-alt"></i> Delete Logs
-          </button>
-          <div class="dropdown-menu dropdown-menu-right">
-            <a class="dropdown-item" href="#" onclick="enableSelectionMode(); return false;">
-              <i class="fas fa-check-square"></i> Select to Delete
-            </a>
-            <div class="dropdown-divider"></div>
-            <a class="dropdown-item text-danger" href="#" data-toggle="modal" data-target="#deleteAllModal">
-              <i class="fas fa-trash-alt"></i> Delete All
-            </a>
-          </div>
-        </div>
-        <!-- Selection Mode Controls (Hidden by default) -->
-        <div id="selectionControls" style="display: none; margin-top: 10px;">
-          <button type="button" class="btn btn-secondary btn-sm" onclick="selectAll()">
-            <i class="fas fa-check-double"></i> Select All
-          </button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="deselectAll()">
-            <i class="fas fa-times"></i> Deselect All
-          </button>
-          <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected()" id="deleteSelectedBtn">
-            <i class="fas fa-trash"></i> Delete Selected (<span id="selectedCount">0</span>)
-          </button>
-          <button type="button" class="btn btn-light btn-sm" onclick="disableSelectionMode()">
-            <i class="fas fa-ban"></i> Cancel
-          </button>
+    <div class="text-right mb-3">
+      <div class="btn-group">
+        <button type="button" class="btn btn-danger dropdown-toggle" data-toggle="dropdown" aria-haspopup="true"
+          aria-expanded="false">
+          <i class="fas fa-trash-alt"></i> Delete Logs
+        </button>
+        <div class="dropdown-menu dropdown-menu-right">
+          <a class="dropdown-item" href="#" onclick="enableSelectionMode(); return false;">
+            <i class="fas fa-check-square"></i> Select to Delete
+          </a>
+          <div class="dropdown-divider"></div>
+          <a class="dropdown-item text-danger" href="#" data-toggle="modal" data-target="#deleteAllModal">
+            <i class="fas fa-trash-alt"></i> Delete All
+          </a>
         </div>
       </div>
+      <!-- Selection Mode Controls (Hidden by default) -->
+      <div id="selectionControls" style="display: none; margin-top: 10px;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="selectAll()">
+          <i class="fas fa-check-double"></i> Select All
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="deselectAll()">
+          <i class="fas fa-times"></i> Deselect All
+        </button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected()" id="deleteSelectedBtn">
+          <i class="fas fa-trash"></i> Delete Selected (<span id="selectedCount">0</span>)
+        </button>
+        <button type="button" class="btn btn-light btn-sm" onclick="disableSelectionMode()">
+          <i class="fas fa-ban"></i> Cancel
+        </button>
+      </div>
+    </div>
     {% endif %}
 
     <!-- Malpractice Log Table -->
@@ -435,89 +444,85 @@
         </thead>
         <tbody>
           {% if result %}
-            {% for i in result %}
-            <tr class="{% if is_admin and i.verified %}reviewed-row{% endif %}" data-log-id="{{ i.id }}">
-              <td class="checkbox-col" style="display: none;">
-                <input type="checkbox" class="log-checkbox" value="{{ i.id }}" onchange="updateSelectedCount()">
-              </td>
-              <td>{{ forloop.counter }}</td>
-              <td>{{ i.date }}</td>
-              <td>{{ i.time }}</td>
-              <td>{{ i.malpractice }}</td>
-              <td>
-                {% if i.lecture_hall %}
-                {{ i.lecture_hall.building }} - {{ i.lecture_hall.hall_name }}
-                {% else %}
-                <span class="text-muted">N/A</span>
-                {% endif %}
-              </td>
-              <td>
-                {% if i.lecture_hall and i.lecture_hall.assigned_teacher %}
-                {{ i.lecture_hall.assigned_teacher.get_full_name|default:i.lecture_hall.assigned_teacher.username }}
-                {% else %}
-                <span class="text-muted">Unassigned</span>
-                {% endif %}
-              </td>
-              <td>
-                <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#videoModal"
-                  onclick="playVideo('{{ i.proof }}')">
-                  View
-                </button>
-              </td>
-              <td>
-                <a href="/media/{{ i.proof }}" download class="btn btn-primary btn-download">
-                  Download
-                </a>
-              </td>
-              <td>
-                <button type="button" class="btn btn-delete" onclick="deleteMalpractice({{ i.id }})">
-                  Delete
-                </button>
-              </td>
-              {% if is_admin %}
-              <td>
-                {% if i.verified %}
-                  {# Show only the button that was selected during review #}
-                  {% if i.is_malpractice %}
-                    <button class="btn btn-success btn-review btn-reviewed-yes" disabled>
-                      Malpractice
-                    </button>
-                  {% else %}
-                    <button class="btn btn-danger btn-review btn-reviewed-no" disabled>
-                      Not Malpractice
-                    </button>
-                  {% endif %}
-                {% else %}
-                  {# Show both buttons for non-reviewed entries #}
-                  <div class="btn-group" role="group">
-                    <button
-                      class="btn btn-success btn-review"
-                      onclick="reviewMalpractice(this, 'yes')">
-                      Malpractice
-                    </button>
-                    <button
-                      class="btn btn-danger btn-review"
-                      onclick="reviewMalpractice(this, 'no')">
-                      Not Malpractice
-                    </button>
-                  </div>
-                {% endif %}
-              </td>
+          {% for i in result %}
+          <tr class="{% if is_admin and i.verified %}reviewed-row{% endif %}" data-log-id="{{ i.id }}">
+            <td class="checkbox-col" style="display: none;">
+              <input type="checkbox" class="log-checkbox" value="{{ i.id }}" onchange="updateSelectedCount()">
+            </td>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ i.date }}</td>
+            <td>{{ i.time }}</td>
+            <td>{{ i.malpractice }}</td>
+            <td>
+              {% if i.lecture_hall %}
+              {{ i.lecture_hall.building }} - {{ i.lecture_hall.hall_name }}
+              {% else %}
+              <span class="text-muted">N/A</span>
               {% endif %}
-            </tr>
-            {% endfor %}
+            </td>
+            <td>
+              {% if i.lecture_hall and i.lecture_hall.assigned_teacher %}
+              {{ i.lecture_hall.assigned_teacher.get_full_name|default:i.lecture_hall.assigned_teacher.username }}
+              {% else %}
+              <span class="text-muted">Unassigned</span>
+              {% endif %}
+            </td>
+            <td>
+              <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#videoModal"
+                onclick="playVideo('{{ i.proof }}')">
+                View
+              </button>
+            </td>
+            <td>
+              <a href="/media/{{ i.proof }}" download class="btn btn-primary btn-download">
+                Download
+              </a>
+            </td>
+            <td>
+              <button type="button" class="btn btn-delete" onclick="deleteMalpractice({{ i.id }})">
+                Delete
+              </button>
+            </td>
+            {% if is_admin %}
+            <td>
+              {% if i.verified %}
+              {# Show only the button that was selected during review #}
+              {% if i.is_malpractice %}
+              <button class="btn btn-success btn-review btn-reviewed-yes" disabled>
+                Malpractice
+              </button>
+              {% else %}
+              <button class="btn btn-danger btn-review btn-reviewed-no" disabled>
+                Not Malpractice
+              </button>
+              {% endif %}
+              {% else %}
+              {# Show both buttons for non-reviewed entries #}
+              <div class="btn-group" role="group">
+                <button class="btn btn-success btn-review" onclick="reviewMalpractice(this, 'yes')">
+                  Malpractice
+                </button>
+                <button class="btn btn-danger btn-review" onclick="reviewMalpractice(this, 'no')">
+                  Not Malpractice
+                </button>
+              </div>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
           {% else %}
-            <tr>
-              <td colspan="{% if is_admin %}11{% else %}10{% endif %}" class="text-center text-muted">
-                No malpractice logs found.
-              </td>
-            </tr>
+          <tr>
+            <td colspan="{% if is_admin %}11{% else %}10{% endif %}" class="text-center text-muted">
+              No malpractice logs found.
+            </td>
+          </tr>
           {% endif %}
         </tbody>
       </table>
     </div>
     <!-- Malpractice Log Table -->
-    
+
   </div>
 </section>
 
@@ -551,8 +556,8 @@
 
     // Determine initial state based on which label has the 'active' class.
     let currentState = labelReviewed.classList.contains("active")
-                      ? "reviewed"
-                      : "not_reviewed";
+      ? "reviewed"
+      : "not_reviewed";
 
     // Set the slider's initial position.
     sliderEl.style.transform =
@@ -571,6 +576,19 @@
         sliderEl.style.transform = "translateX(0)";
         labelReviewed.classList.remove("active");
         labelNotReviewed.classList.add("active");
+      }
+
+      // Update hidden input for Delete All modal
+      const deleteReviewInput = document.getElementById("deleteReviewStatus");
+      if (deleteReviewInput) {
+        deleteReviewInput.value = currentState;
+      }
+
+      // Update warning text in modal
+      const deleteWarningText = document.getElementById("deleteWarningText");
+      if (deleteWarningText) {
+        const typeText = currentState === "reviewed" ? "REVIEWED" : "NOT REVIEWED";
+        deleteWarningText.innerHTML = `Are you sure you want to delete <strong>ALL ${typeText}</strong> malpractice logs?`;
       }
 
       // Update the URL parameter without reloading.
@@ -604,15 +622,15 @@
   });
 
 
-  document.addEventListener("DOMContentLoaded", function() {
+  document.addEventListener("DOMContentLoaded", function () {
     const filterForm = document.querySelector(".filter-bar form");
     if (!filterForm) return;
 
-    filterForm.addEventListener("submit", function(e) {
+    filterForm.addEventListener("submit", function (e) {
       // Prevent the default full-page reload.
       e.preventDefault();
       sessionStorage.setItem("retainFilters", "true");
-      
+
       // Serialize form data into query string.
       const formData = new FormData(filterForm);
       const params = new URLSearchParams(formData);
@@ -647,7 +665,7 @@
 
 
   // Filtering data made to default when page is refreshed
-  window.addEventListener("load", function() {
+  window.addEventListener("load", function () {
     const navEntries = performance.getEntriesByType("navigation");
     if (navEntries.length > 0 && navEntries[0].type === "reload") {
       // When the page was manually refreshed, clear the query parameters.
@@ -662,28 +680,45 @@
     const errorDisplay = document.getElementById('videoError');
     errorDisplay.style.display = 'none';
 
-    // Construct the full media path
-    const mediaPath = `/media/${videoUrl}`;
+    // Use the serve_video endpoint which converts to browser-compatible H.264
+    const mediaPath = `/serve_video/?file=${encodeURIComponent(videoUrl)}`;
     console.log('Loading video:', mediaPath);
 
-    // Reset and set the video source directly
+    // Reset the video player completely
     videoPlayer.pause();
-    videoPlayer.src = mediaPath;
+    videoPlayer.removeAttribute('src');
+
+    // Remove all existing source elements
+    while (videoPlayer.firstChild) {
+      videoPlayer.removeChild(videoPlayer.firstChild);
+    }
+
+    // Create a new source element with explicit type
+    const source = document.createElement('source');
+    source.src = mediaPath;
+    source.type = 'video/mp4';
+    videoPlayer.appendChild(source);
+
+    // Load and play
     videoPlayer.load();
 
     // Handle errors
     videoPlayer.onerror = (e) => {
       console.error('Video load error:', e);
-      errorDisplay.textContent = 'Error: Video file not found or invalid format';
+      console.error('Error details:', videoPlayer.error);
+      errorDisplay.textContent = `Error: ${videoPlayer.error ? videoPlayer.error.message : 'Video file not found or invalid format'}`;
       errorDisplay.style.display = 'block';
     };
 
-    // Attempt to play
-    videoPlayer.play().catch(error => {
-      console.error('Playback error:', error);
-      errorDisplay.textContent = `Playback failed: ${error.message}`;
-      errorDisplay.style.display = 'block';
-    });
+    // Wait for metadata to load before playing
+    videoPlayer.onloadedmetadata = () => {
+      console.log('Video metadata loaded successfully');
+      videoPlayer.play().catch(error => {
+        console.error('Playback error:', error);
+        errorDisplay.textContent = `Playback failed: ${error.message}`;
+        errorDisplay.style.display = 'block';
+      });
+    };
   }
 
   // SELECTION MODE FUNCTIONS
@@ -750,7 +785,7 @@
   function deleteSelected() {
     const selectedCheckboxes = document.querySelectorAll('.log-checkbox:checked');
     const selectedIds = Array.from(selectedCheckboxes).map(cb => cb.value);
-    
+
     if (selectedIds.length === 0) {
       alert('Please select at least one log to delete.');
       return;
@@ -759,7 +794,7 @@
     // Store selected IDs in the modal form
     document.getElementById('selectedLogIds').value = selectedIds.join(',');
     document.getElementById('selectedLogsCount').textContent = selectedIds.length;
-    
+
     // Show confirmation modal
     $('#deleteSelectedModal').modal('show');
   }
@@ -777,28 +812,28 @@
         'X-CSRFToken': '{{ csrf_token }}'
       }
     })
-    .then(response => {
-      if (response.ok) {
-        // Remove the row from the table
-        const row = document.querySelector(`button[onclick="deleteMalpractice(${logId})"]`).closest('tr');
-        row.style.transition = 'opacity 0.3s';
-        row.style.opacity = '0';
-        setTimeout(() => {
-          row.remove();
-          // Check if table is empty
-          const tbody = document.querySelector('.table tbody');
-          if (tbody.querySelectorAll('tr').length === 0) {
-            location.reload();
-          }
-        }, 300);
-      } else {
-        alert('Failed to delete the log. Please try again.');
-      }
-    })
-    .catch(error => {
-      console.error('Delete error:', error);
-      alert('An error occurred while deleting the log.');
-    });
+      .then(response => {
+        if (response.ok) {
+          // Remove the row from the table
+          const row = document.querySelector(`button[onclick="deleteMalpractice(${logId})"]`).closest('tr');
+          row.style.transition = 'opacity 0.3s';
+          row.style.opacity = '0';
+          setTimeout(() => {
+            row.remove();
+            // Check if table is empty
+            const tbody = document.querySelector('.table tbody');
+            if (tbody.querySelectorAll('tr').length === 0) {
+              location.reload();
+            }
+          }, 300);
+        } else {
+          alert('Failed to delete the log. Please try again.');
+        }
+      })
+      .catch(error => {
+        console.error('Delete error:', error);
+        alert('An error occurred while deleting the log.');
+      });
   }
 
 
@@ -812,65 +847,69 @@
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     button.disabled = true;
 
-    // Get the table row containing the clicked button
     const row = button.closest('tr');
-    // Add a class to ensure transitions are applied
-    row.classList.add('reviewing-row');
-    
-    const proof = row.querySelector('a[download]').getAttribute('href').split('/').pop();
+    const logId = row.getAttribute('data-log-id');
+    // Get proof filename from the download link in the same row
+    const downloadLink = row.querySelector('a[download]');
+    const proof = downloadLink ? downloadLink.getAttribute('href').replace('/media/', '') : '';
 
-    fetch(`/review_malpractice/`, {
+    fetch('/review_malpractice/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-CSRFToken': '{{ csrf_token }}'
       },
-      body: JSON.stringify({ proof: proof, decision: decision })
+      body: JSON.stringify({
+        proof: proof,
+        decision: decision
+      })
     })
-    .then(response => {
-      if (response.ok) {
-        // If we're in "Not Reviewed" section, immediately remove the row
-        if (currentReviewFilter === "not_reviewed") {
-          row.style.transition = "opacity 0.3s ease, transform 0.3s ease";
-          row.style.opacity = "0";
-          row.style.transform = "translateX(30px)";
-          setTimeout(() => {
-            row.remove();
-            // Check if table is empty and show message
-            const tbody = document.querySelector('.table tbody');
-            const remainingRows = tbody.querySelectorAll('tr');
-            if (remainingRows.length === 0) {
-              const colspan = document.querySelector('.table thead tr').children.length;
-              tbody.innerHTML = `<tr><td colspan="${colspan}" class="text-center text-muted">No malpractice logs found.</td></tr>`;
-            }
-          }, 300);
-        } else {
-          // If in "Reviewed" section, just update the button styling
-          row.classList.add('reviewed-row');
-          const buttons = row.querySelectorAll('.btn-review');
-          buttons.forEach(btn => {
-            btn.disabled = true;
-          });
-          if (decision === 'yes') {
-            button.classList.add('btn-reviewed-yes');
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // If we're in "Not Reviewed" section, immediately remove the row
+          if (currentReviewFilter === "not_reviewed") {
+            row.style.transition = "opacity 0.3s ease, transform 0.3s ease";
+            row.style.opacity = "0";
+            row.style.transform = "translateX(30px)";
+            setTimeout(() => {
+              row.remove();
+              // Check if table is empty and show message
+              const tbody = document.querySelector('.table tbody');
+              const remainingRows = tbody.querySelectorAll('tr');
+              if (remainingRows.length === 0) {
+                const colspan = document.querySelector('.table thead tr').children.length;
+                tbody.innerHTML = `<tr><td colspan="${colspan}" class="text-center text-muted">No malpractice logs found.</td></tr>`;
+              }
+            }, 300);
           } else {
-            button.classList.add('btn-reviewed-no');
+            // If in "Reviewed" section, just update the button styling
+            row.classList.add('reviewed-row');
+            const buttons = row.querySelectorAll('.btn-review');
+            buttons.forEach(btn => {
+              btn.disabled = true;
+            });
+            if (decision === 'yes') {
+              button.classList.add('btn-reviewed-yes');
+            } else {
+              button.classList.add('btn-reviewed-no');
+            }
+            button.innerHTML = originalContent;
           }
+        } else {
+          // On error, restore button
+          console.error('Review failed:', data.error);
           button.innerHTML = originalContent;
+          button.disabled = false;
+          alert('Failed to review the log: ' + (data.error || 'Unknown error'));
         }
-      } else {
-        // On error, restore button
+      })
+      .catch(error => {
+        console.error("Review update failed:", error);
         button.innerHTML = originalContent;
         button.disabled = false;
-        alert('Failed to review the log. Please try again.');
-      }
-    })
-    .catch(error => {
-      console.error("Review update failed:", error);
-      button.innerHTML = originalContent;
-      button.disabled = false;
-      alert('An error occurred. Please try again.');
-    });
+        alert('An error occurred. Please try again.');
+      });
 
   }
 
@@ -879,7 +918,8 @@
 </script>
 
 <!-- Delete All Confirmation Modal -->
-<div class="modal fade" id="deleteAllModal" tabindex="-1" role="dialog" aria-labelledby="deleteAllModalLabel" aria-hidden="true">
+<div class="modal fade" id="deleteAllModal" tabindex="-1" role="dialog" aria-labelledby="deleteAllModalLabel"
+  aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content">
       <div class="modal-header bg-danger text-white">
@@ -894,8 +934,9 @@
         <p class="text-danger font-weight-bold">
           <i class="fas fa-warning"></i> Warning: This action cannot be undone!
         </p>
-        <p>Are you sure you want to delete <strong>ALL</strong> malpractice logs from the database?</p>
-        <p class="text-muted">This will permanently remove all records and their associated files.</p>
+        <p id="deleteWarningText">Are you sure you want to delete <strong>ALL {% if review_filter == 'reviewed' %}REVIEWED{% else %}NOT REVIEWED{% endif %}</strong> malpractice logs?</p>
+        <p class="text-muted">This will permanently remove the currently filtered records and their associated files.
+        </p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-dismiss="modal">
@@ -903,6 +944,8 @@
         </button>
         <form method="post" action="{% url 'delete_all_logs' %}" style="display: inline;">
           {% csrf_token %}
+          <input type="hidden" name="review_status" id="deleteReviewStatus"
+            value="{{ review_filter|default:'not_reviewed' }}">
           <button type="submit" class="btn btn-danger">
             <i class="fas fa-trash-alt"></i> Yes, Delete All
           </button>
@@ -913,7 +956,8 @@
 </div>
 
 <!-- Delete Selected Confirmation Modal -->
-<div class="modal fade" id="deleteSelectedModal" tabindex="-1" role="dialog" aria-labelledby="deleteSelectedModalLabel" aria-hidden="true">
+<div class="modal fade" id="deleteSelectedModal" tabindex="-1" role="dialog" aria-labelledby="deleteSelectedModalLabel"
+  aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content">
       <div class="modal-header bg-warning text-dark">
@@ -928,7 +972,8 @@
         <p class="text-warning font-weight-bold">
           <i class="fas fa-warning"></i> Warning: This action cannot be undone!
         </p>
-        <p>Are you sure you want to delete <strong><span id="selectedLogsCount">0</span></strong> selected malpractice log(s)?</p>
+        <p>Are you sure you want to delete <strong><span id="selectedLogsCount">0</span></strong> selected malpractice
+          log(s)?</p>
         <p class="text-muted">This will permanently remove the selected records and their associated files.</p>
       </div>
       <div class="modal-footer">
