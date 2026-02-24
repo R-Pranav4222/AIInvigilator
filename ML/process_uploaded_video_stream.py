@@ -179,8 +179,151 @@ def is_likely_phone(x1, y1, x2, y2, conf, frame_width, frame_height):
     return True, f"phone-like (aspect:{aspect:.2f}, area:{area_ratio:.2%}, conf:{conf:.2f})"
 
 
-def save_video_to_database(action, video_filepath, lecture_hall_id):
-    """Save video clip to database - exactly like front.py"""
+def calculate_malpractice_probability(action, video_filepath, detection_frames=0, 
+                                      total_recording_frames=0, avg_confidence=0.0, fps=30):
+    """
+    Multi-factor AI probability scoring for malpractice detection.
+    Returns a score from 0-100 representing how likely the detection is real malpractice.
+    
+    Factors:
+    1. Clip Duration (30%) — longer sustained clips = more likely real
+    2. Detection Frame Density (25%) — what fraction of recording had active detection  
+    3. Detection Confidence (20%) — average YOLO/pose confidence during detection
+    4. Detection Sustainability (15%) — how far above threshold the detection went
+    5. Malpractice Type Prior (10%) — type-specific false positive rates
+    """
+    
+    # ===== Factor 1: Clip Duration Score (30% weight) =====
+    # Get video duration from file
+    clip_duration = 0.0
+    try:
+        cap = cv2.VideoCapture(video_filepath)
+        if cap.isOpened():
+            total = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            vid_fps = cap.get(cv2.CAP_PROP_FPS) or fps
+            clip_duration = total / vid_fps if vid_fps > 0 else 0
+            cap.release()
+    except:
+        pass
+    
+    if clip_duration <= 0 and total_recording_frames > 0:
+        # Fallback: estimate from frame count
+        clip_duration = total_recording_frames / fps
+    
+    # Duration scoring: < 1s → 0.15, 1-2s → 0.30, 2-4s → 0.55, 4-6s → 0.75, 6-10s → 0.90, 10+ → 1.0
+    if clip_duration >= 10:
+        duration_score = 1.0
+    elif clip_duration >= 6:
+        duration_score = 0.90
+    elif clip_duration >= 4:
+        duration_score = 0.75
+    elif clip_duration >= 2:
+        duration_score = 0.55
+    elif clip_duration >= 1:
+        duration_score = 0.30
+    else:
+        duration_score = 0.15
+    
+    # ===== Factor 2: Detection Frame Density (25% weight) =====
+    # What fraction of the total recording frames actually had the action detected
+    if total_recording_frames > 0 and detection_frames > 0:
+        density = min(detection_frames / total_recording_frames, 1.0)
+        # Higher density = more consistent detection
+        density_score = min(density * 1.5, 1.0)  # Boost slightly, cap at 1.0
+    else:
+        density_score = 0.3  # Default if no data
+    
+    # ===== Factor 3: Detection Confidence (20% weight) =====
+    # Average YOLO/pose confidence during detection
+    if avg_confidence > 0:
+        # Confidence is typically 0.25-0.95 for valid detections
+        # Map to 0-1: conf < 0.30 → low, 0.30-0.50 → medium, 0.50+ → high
+        if avg_confidence >= 0.70:
+            conf_score = 1.0
+        elif avg_confidence >= 0.50:
+            conf_score = 0.80
+        elif avg_confidence >= 0.35:
+            conf_score = 0.55
+        elif avg_confidence >= 0.25:
+            conf_score = 0.35
+        else:
+            conf_score = 0.15
+    else:
+        conf_score = 0.5  # Default if no confidence data available
+    
+    # ===== Factor 4: Detection Sustainability (15% weight) =====
+    # How many frames above threshold — sustained detection = more reliable
+    threshold_map = {
+        LEANING_ACTION: LEANING_THRESHOLD,
+        ACTION_MOBILE: MOBILE_THRESHOLD,
+        PASSING_ACTION: PASSING_THRESHOLD,
+        TURNING_ACTION: TURNING_THRESHOLD,
+        HAND_RAISE_ACTION: HAND_RAISE_THRESHOLD,
+    }
+    threshold = threshold_map.get(action, 3)
+    
+    if detection_frames > 0:
+        sustainability_ratio = detection_frames / threshold
+        if sustainability_ratio >= 5:
+            sustainability_score = 1.0
+        elif sustainability_ratio >= 3:
+            sustainability_score = 0.85
+        elif sustainability_ratio >= 2:
+            sustainability_score = 0.65
+        elif sustainability_ratio >= 1.5:
+            sustainability_score = 0.45
+        else:
+            sustainability_score = 0.25
+    else:
+        sustainability_score = 0.25
+    
+    # ===== Factor 5: Malpractice Type Prior (10% weight) =====
+    # Based on historical false positive rates per detection type
+    type_priors = {
+        ACTION_MOBILE: 0.85,        # YOLO object detection — very accurate
+        TURNING_ACTION: 0.75,       # Pose-based, fairly distinct
+        LEANING_ACTION: 0.65,       # Pose-based, can be natural posture  
+        PASSING_ACTION: 0.60,       # Wrist proximity heuristic, can be coincidental
+        HAND_RAISE_ACTION: 0.50,    # Could be legitimate behavior
+    }
+    type_score = type_priors.get(action, 0.50)
+    
+    # ===== Weighted Combination =====
+    probability = (
+        duration_score * 0.30 +
+        density_score * 0.25 +
+        conf_score * 0.20 +
+        sustainability_score * 0.15 +
+        type_score * 0.10
+    ) * 100
+    
+    # Clamp to 0-100
+    probability = max(0.0, min(100.0, round(probability, 1)))
+    
+    print(f"   📊 Probability Score: {probability}%")
+    print(f"      Duration: {clip_duration:.1f}s → {duration_score:.2f} (30%)")
+    print(f"      Density: {detection_frames}/{total_recording_frames} → {density_score:.2f} (25%)")
+    print(f"      Confidence: {avg_confidence:.2f} → {conf_score:.2f} (20%)")
+    print(f"      Sustainability: {detection_frames}/{threshold}x → {sustainability_score:.2f} (15%)")
+    print(f"      Type Prior ({action}): {type_score:.2f} (10%)")
+    
+    return probability
+
+
+def save_video_to_database(action, video_filepath, lecture_hall_id, 
+                           detection_frames=0, total_recording_frames=0, 
+                           avg_confidence=0.0, fps=30):
+    """Save video clip to database with AI probability score.
+    
+    Args:
+        action: Type of malpractice detected
+        video_filepath: Path to the proof video
+        lecture_hall_id: ID of the lecture hall
+        detection_frames: Number of frames with active detection
+        total_recording_frames: Total frames in the recording
+        avg_confidence: Average YOLO/pose confidence score
+        fps: Video FPS for duration calculation
+    """
     try:
         now = datetime.now()
         date_str = now.strftime("%Y-%m-%d")
@@ -188,6 +331,12 @@ def save_video_to_database(action, video_filepath, lecture_hall_id):
         
         # Extract just the filename for database
         proof_filename = os.path.basename(video_filepath)
+        
+        # Calculate AI probability score
+        probability = calculate_malpractice_probability(
+            action, video_filepath, detection_frames, 
+            total_recording_frames, avg_confidence, fps
+        )
         
         db = mysql.connector.connect(
             host="localhost",
@@ -198,10 +347,10 @@ def save_video_to_database(action, video_filepath, lecture_hall_id):
         cursor = db.cursor()
         
         sql = """INSERT INTO app_malpraticedetection 
-                 (date, time, malpractice, proof, lecture_hall_id, verified) 
-                 VALUES (%s, %s, %s, %s, %s, %s)"""
+                 (date, time, malpractice, proof, lecture_hall_id, verified, probability_score) 
+                 VALUES (%s, %s, %s, %s, %s, %s, %s)"""
         
-        cursor.execute(sql, (date_str, time_str, action, proof_filename, lecture_hall_id, False))
+        cursor.execute(sql, (date_str, time_str, action, proof_filename, lecture_hall_id, False, probability))
         db.commit()
         cursor.close()
         db.close()
@@ -209,6 +358,7 @@ def save_video_to_database(action, video_filepath, lecture_hall_id):
         print(f"\n✅ SAVED TO DATABASE: {action}")
         print(f"   🎥 Video: {proof_filename}")
         print(f"   🕒 Time: {time_str}")
+        print(f"   📊 AI Probability: {probability}%")
         return True
     except Exception as e:
         print(f"❌ Database save error: {e}")
@@ -716,6 +866,33 @@ def stream_process_video(video_path, lecture_hall_id):
             frame_buffer = deque(maxlen=buffer_size)
             print(f"💾 Frame Buffer: {buffer_size} frames (1.5 seconds pre-roll)")
 
+            # ===== PROBABILITY SCORING TRACKERS =====
+            # Total detection frames per recording session (for density calculation)
+            leaning_detection_total = 0
+            mobile_detection_total = 0
+            passing_detection_total = 0
+            turning_detection_total = 0
+            hand_raise_detection_total = 0
+
+            # Total recording frames per session
+            leaning_recording_total = 0
+            mobile_recording_total = 0
+            passing_recording_total = 0
+            turning_recording_total = 0
+            hand_raise_recording_total = 0
+
+            # Confidence accumulators (sum + count for averaging)
+            mobile_conf_sum = 0.0
+            mobile_conf_count = 0
+            leaning_conf_sum = 0.0
+            leaning_conf_count = 0
+            passing_conf_sum = 0.0
+            passing_conf_count = 0
+            turning_conf_sum = 0.0
+            turning_conf_count = 0
+            hand_raise_conf_sum = 0.0
+            hand_raise_conf_count = 0
+
             # Persistent annotation state (carried between YOLO runs for smooth visuals)
             last_keypoints_list = []
             last_mobile_boxes = []
@@ -856,6 +1033,58 @@ def stream_process_video(video_path, lecture_hall_id):
                     max_turning_frames = max(max_turning_frames, turning_frames)
                     max_hand_raise_frames = max(max_hand_raise_frames, hand_raise_frames)
 
+                    # ===== PROBABILITY TRACKING: Count detection/recording frames =====
+                    # Track frames while recording is active (for density calculation)
+                    if leaning_in_progress:
+                        leaning_recording_total += 1
+                        if leaning_this_frame:
+                            leaning_detection_total += 1
+                            # Track avg keypoint confidence for leaning
+                            if last_keypoints_list:
+                                kp = last_keypoints_list[0]
+                                avg_kp_conf = float(np.mean([kp[i][2] for i in [0, 5, 6, 11, 12] if i < len(kp) and kp[i][2] > 0]))
+                                leaning_conf_sum += avg_kp_conf
+                                leaning_conf_count += 1
+                    
+                    if mobile_in_progress:
+                        mobile_recording_total += 1
+                        if mobile_this_frame:
+                            mobile_detection_total += 1
+                            # Track avg YOLO confidence for mobile
+                            if last_mobile_boxes:
+                                avg_mob_conf = float(np.mean([b[4] for b in last_mobile_boxes]))
+                                mobile_conf_sum += avg_mob_conf
+                                mobile_conf_count += 1
+                    
+                    if passing_in_progress:
+                        passing_recording_total += 1
+                        if passing_this_frame:
+                            passing_detection_total += 1
+                            if last_keypoints_list and len(last_keypoints_list) >= 2:
+                                avg_kp_conf = float(np.mean([kp[i][2] for kp in last_keypoints_list[:2] for i in [9, 10] if i < len(kp) and kp[i][2] > 0]))
+                                passing_conf_sum += avg_kp_conf
+                                passing_conf_count += 1
+                    
+                    if turning_in_progress:
+                        turning_recording_total += 1
+                        if turning_this_frame:
+                            turning_detection_total += 1
+                            if last_keypoints_list:
+                                kp = last_keypoints_list[0]
+                                avg_kp_conf = float(np.mean([kp[i][2] for i in [0, 1, 2, 5, 6] if i < len(kp) and kp[i][2] > 0]))
+                                turning_conf_sum += avg_kp_conf
+                                turning_conf_count += 1
+                    
+                    if hand_raise_in_progress:
+                        hand_raise_recording_total += 1
+                        if hand_raise_this_frame:
+                            hand_raise_detection_total += 1
+                            if last_keypoints_list:
+                                kp = last_keypoints_list[0]
+                                avg_kp_conf = float(np.mean([kp[i][2] for i in [5, 6, 7, 8, 9, 10] if i < len(kp) and kp[i][2] > 0]))
+                                hand_raise_conf_sum += avg_kp_conf
+                                hand_raise_conf_count += 1
+
                     # ===== RECORDING LOGIC WITH GRACE PERIOD =====
 
                     # LEANING
@@ -884,9 +1113,19 @@ def stream_process_video(video_path, lecture_hall_id):
                                     if os.path.exists(temp_leaning):
                                         print(f"\n  💾 Grace period ended - saving leaning clip")
                                         shutil.copy(temp_leaning, final_path)
-                                        save_video_to_database(LEANING_ACTION, final_path, lecture_hall_id)
+                                        save_video_to_database(
+                                            LEANING_ACTION, final_path, lecture_hall_id,
+                                            detection_frames=leaning_detection_total,
+                                            total_recording_frames=leaning_recording_total,
+                                            avg_confidence=leaning_conf_sum / leaning_conf_count if leaning_conf_count > 0 else 0,
+                                            fps=actual_fps
+                                        )
                                         detections_count['leaning'] += 1
                                     leaning_recording = False
+                                    leaning_detection_total = 0
+                                    leaning_recording_total = 0
+                                    leaning_conf_sum = 0.0
+                                    leaning_conf_count = 0
                                 leaning_grace_frames = 0
 
                     # MOBILE
@@ -915,9 +1154,19 @@ def stream_process_video(video_path, lecture_hall_id):
                                     if os.path.exists(temp_mobile):
                                         print(f"\n  💾 Grace period ended - saving mobile clip")
                                         shutil.copy(temp_mobile, final_path)
-                                        save_video_to_database(ACTION_MOBILE, final_path, lecture_hall_id)
+                                        save_video_to_database(
+                                            ACTION_MOBILE, final_path, lecture_hall_id,
+                                            detection_frames=mobile_detection_total,
+                                            total_recording_frames=mobile_recording_total,
+                                            avg_confidence=mobile_conf_sum / mobile_conf_count if mobile_conf_count > 0 else 0,
+                                            fps=actual_fps
+                                        )
                                         detections_count['mobile'] += 1
                                     mobile_recording = False
+                                    mobile_detection_total = 0
+                                    mobile_recording_total = 0
+                                    mobile_conf_sum = 0.0
+                                    mobile_conf_count = 0
                                 mobile_grace_frames = 0
 
                     # PASSING PAPER
@@ -946,9 +1195,19 @@ def stream_process_video(video_path, lecture_hall_id):
                                     if os.path.exists(temp_passing):
                                         print(f"\n  💾 Grace period ended - saving passing paper clip")
                                         shutil.copy(temp_passing, final_path)
-                                        save_video_to_database(PASSING_ACTION, final_path, lecture_hall_id)
+                                        save_video_to_database(
+                                            PASSING_ACTION, final_path, lecture_hall_id,
+                                            detection_frames=passing_detection_total,
+                                            total_recording_frames=passing_recording_total,
+                                            avg_confidence=passing_conf_sum / passing_conf_count if passing_conf_count > 0 else 0,
+                                            fps=actual_fps
+                                        )
                                         detections_count['passing'] += 1
                                     passing_recording = False
+                                    passing_detection_total = 0
+                                    passing_recording_total = 0
+                                    passing_conf_sum = 0.0
+                                    passing_conf_count = 0
                                 passing_grace_frames = 0
 
                     # TURNING BACK
@@ -977,9 +1236,19 @@ def stream_process_video(video_path, lecture_hall_id):
                                     if os.path.exists(temp_turning):
                                         print(f"\n  💾 Grace period ended - saving turning back clip")
                                         shutil.copy(temp_turning, final_path)
-                                        save_video_to_database(TURNING_ACTION, final_path, lecture_hall_id)
+                                        save_video_to_database(
+                                            TURNING_ACTION, final_path, lecture_hall_id,
+                                            detection_frames=turning_detection_total,
+                                            total_recording_frames=turning_recording_total,
+                                            avg_confidence=turning_conf_sum / turning_conf_count if turning_conf_count > 0 else 0,
+                                            fps=actual_fps
+                                        )
                                         detections_count['turning'] += 1
                                     turning_recording = False
+                                    turning_detection_total = 0
+                                    turning_recording_total = 0
+                                    turning_conf_sum = 0.0
+                                    turning_conf_count = 0
                                 turning_grace_frames = 0
 
                     # HAND RAISE
@@ -1008,9 +1277,19 @@ def stream_process_video(video_path, lecture_hall_id):
                                     if os.path.exists(temp_hand_raise):
                                         print(f"\n  💾 Grace period ended - saving hand raise clip")
                                         shutil.copy(temp_hand_raise, final_path)
-                                        save_video_to_database(HAND_RAISE_ACTION, final_path, lecture_hall_id)
+                                        save_video_to_database(
+                                            HAND_RAISE_ACTION, final_path, lecture_hall_id,
+                                            detection_frames=hand_raise_detection_total,
+                                            total_recording_frames=hand_raise_recording_total,
+                                            avg_confidence=hand_raise_conf_sum / hand_raise_conf_count if hand_raise_conf_count > 0 else 0,
+                                            fps=actual_fps
+                                        )
                                         detections_count['hand_raise'] += 1
                                     hand_raise_recording = False
+                                    hand_raise_detection_total = 0
+                                    hand_raise_recording_total = 0
+                                    hand_raise_conf_sum = 0.0
+                                    hand_raise_conf_count = 0
                                 hand_raise_grace_frames = 0
 
                     # ===== YOLO FRAME: Add overlays, encode and queue for streaming =====
@@ -1131,7 +1410,13 @@ def stream_process_video(video_path, lecture_hall_id):
                 final_path = os.path.join(MEDIA_DIR, final_filename)
                 if os.path.exists(temp_leaning):
                     shutil.copy(temp_leaning, final_path)
-                    save_video_to_database(LEANING_ACTION, final_path, lecture_hall_id)
+                    save_video_to_database(
+                        LEANING_ACTION, final_path, lecture_hall_id,
+                        detection_frames=leaning_detection_total,
+                        total_recording_frames=leaning_recording_total,
+                        avg_confidence=leaning_conf_sum / leaning_conf_count if leaning_conf_count > 0 else 0,
+                        fps=actual_fps
+                    )
                     detections_count['leaning'] += 1
 
             # Save incomplete mobile recording
@@ -1144,7 +1429,13 @@ def stream_process_video(video_path, lecture_hall_id):
                 final_path = os.path.join(MEDIA_DIR, final_filename)
                 if os.path.exists(temp_mobile):
                     shutil.copy(temp_mobile, final_path)
-                    save_video_to_database(ACTION_MOBILE, final_path, lecture_hall_id)
+                    save_video_to_database(
+                        ACTION_MOBILE, final_path, lecture_hall_id,
+                        detection_frames=mobile_detection_total,
+                        total_recording_frames=mobile_recording_total,
+                        avg_confidence=mobile_conf_sum / mobile_conf_count if mobile_conf_count > 0 else 0,
+                        fps=actual_fps
+                    )
                     detections_count['mobile'] += 1
 
             # Save incomplete passing paper recording
@@ -1157,7 +1448,13 @@ def stream_process_video(video_path, lecture_hall_id):
                 final_path = os.path.join(MEDIA_DIR, final_filename)
                 if os.path.exists(temp_passing):
                     shutil.copy(temp_passing, final_path)
-                    save_video_to_database(PASSING_ACTION, final_path, lecture_hall_id)
+                    save_video_to_database(
+                        PASSING_ACTION, final_path, lecture_hall_id,
+                        detection_frames=passing_detection_total,
+                        total_recording_frames=passing_recording_total,
+                        avg_confidence=passing_conf_sum / passing_conf_count if passing_conf_count > 0 else 0,
+                        fps=actual_fps
+                    )
                     detections_count['passing'] += 1
 
             # Save incomplete turning back recording
@@ -1170,7 +1467,13 @@ def stream_process_video(video_path, lecture_hall_id):
                 final_path = os.path.join(MEDIA_DIR, final_filename)
                 if os.path.exists(temp_turning):
                     shutil.copy(temp_turning, final_path)
-                    save_video_to_database(TURNING_ACTION, final_path, lecture_hall_id)
+                    save_video_to_database(
+                        TURNING_ACTION, final_path, lecture_hall_id,
+                        detection_frames=turning_detection_total,
+                        total_recording_frames=turning_recording_total,
+                        avg_confidence=turning_conf_sum / turning_conf_count if turning_conf_count > 0 else 0,
+                        fps=actual_fps
+                    )
                     detections_count['turning'] += 1
 
             # Save incomplete hand raise recording
@@ -1183,7 +1486,13 @@ def stream_process_video(video_path, lecture_hall_id):
                 final_path = os.path.join(MEDIA_DIR, final_filename)
                 if os.path.exists(temp_hand_raise):
                     shutil.copy(temp_hand_raise, final_path)
-                    save_video_to_database(HAND_RAISE_ACTION, final_path, lecture_hall_id)
+                    save_video_to_database(
+                        HAND_RAISE_ACTION, final_path, lecture_hall_id,
+                        detection_frames=hand_raise_detection_total,
+                        total_recording_frames=hand_raise_recording_total,
+                        avg_confidence=hand_raise_conf_sum / hand_raise_conf_count if hand_raise_conf_count > 0 else 0,
+                        fps=actual_fps
+                    )
                     detections_count['hand_raise'] += 1
 
             # Cleanup video capture and writers

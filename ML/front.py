@@ -161,6 +161,118 @@ PEEKING_ACTION = "Peeking"
 TALKING_ACTION = "Talking"
 SUSPICIOUS_ACTION = "Suspicious Behavior"
 
+
+# ========================
+# AI PROBABILITY SCORING
+# ========================
+def calculate_malpractice_probability_live(action, video_filepath, detection_frames=0, fps=30):
+    """
+    Multi-factor AI probability scoring for live camera malpractice detection.
+    Returns a score from 0-100.
+    
+    Factors:
+    1. Clip Duration (30%) — longer sustained clips = more likely real
+    2. Detection Frame Density (25%) — detection frames vs grace period
+    3. Detection Sustainability (15%) — how far above threshold the detection went
+    4. Malpractice Type Prior (20%) — type-specific false positive rates
+    5. Base Confidence (10%) — baseline confidence for live detection
+    """
+    # Factor 1: Clip Duration from video file
+    clip_duration = 0.0
+    try:
+        cap = cv2.VideoCapture(video_filepath)
+        if cap.isOpened():
+            total = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            vid_fps = cap.get(cv2.CAP_PROP_FPS) or fps
+            clip_duration = total / vid_fps if vid_fps > 0 else 0
+            cap.release()
+    except:
+        pass
+    
+    if clip_duration >= 10:
+        duration_score = 1.0
+    elif clip_duration >= 6:
+        duration_score = 0.90
+    elif clip_duration >= 4:
+        duration_score = 0.75
+    elif clip_duration >= 2:
+        duration_score = 0.55
+    elif clip_duration >= 1:
+        duration_score = 0.30
+    else:
+        duration_score = 0.15
+    
+    # Factor 2: Detection frame density
+    threshold_map = {
+        LEANING_ACTION: LEANING_THRESHOLD,
+        ACTION_MOBILE: MOBILE_THRESHOLD,
+        PASSING_ACTION: PASSING_THRESHOLD,
+        TURNING_ACTION: TURNING_THRESHOLD,
+        HAND_RAISE_ACTION: HAND_RAISE_THRESHOLD,
+    }
+    threshold = threshold_map.get(action, 3)
+    grace_map = {
+        LEANING_ACTION: LEANING_GRACE_PERIOD,
+        ACTION_MOBILE: MOBILE_GRACE_PERIOD,
+        PASSING_ACTION: PASSING_GRACE_PERIOD,
+        TURNING_ACTION: TURNING_GRACE_PERIOD,
+        HAND_RAISE_ACTION: HAND_RAISE_GRACE_PERIOD,
+    }
+    grace = grace_map.get(action, 60)
+    total_recording_frames = detection_frames + grace
+    if total_recording_frames > 0 and detection_frames > 0:
+        density = min(detection_frames / total_recording_frames, 1.0)
+        density_score = min(density * 1.5, 1.0)
+    else:
+        density_score = 0.3
+    
+    # Factor 3: Detection Sustainability
+    if detection_frames > 0:
+        sustainability_ratio = detection_frames / threshold
+        if sustainability_ratio >= 5:
+            sustainability_score = 1.0
+        elif sustainability_ratio >= 3:
+            sustainability_score = 0.85
+        elif sustainability_ratio >= 2:
+            sustainability_score = 0.65
+        elif sustainability_ratio >= 1.5:
+            sustainability_score = 0.45
+        else:
+            sustainability_score = 0.25
+    else:
+        sustainability_score = 0.25
+    
+    # Factor 4: Malpractice Type Prior
+    type_priors = {
+        ACTION_MOBILE: 0.85,
+        TURNING_ACTION: 0.75,
+        LEANING_ACTION: 0.65,
+        PASSING_ACTION: 0.60,
+        HAND_RAISE_ACTION: 0.50,
+        CHEAT_MATERIAL_ACTION: 0.80,
+        PEEKING_ACTION: 0.70,
+        TALKING_ACTION: 0.55,
+        SUSPICIOUS_ACTION: 0.45,
+    }
+    type_score = type_priors.get(action, 0.50)
+    
+    # Factor 5: Base confidence for live detection (higher than uploaded video)
+    conf_score = 0.65  # Live camera tends to be more reliable than uploaded video
+    
+    # Weighted combination
+    probability = (
+        duration_score * 0.30 +
+        density_score * 0.25 +
+        sustainability_score * 0.15 +
+        type_score * 0.20 +
+        conf_score * 0.10
+    ) * 100
+    
+    probability = max(0.0, min(100.0, round(probability, 1)))
+    print(f"   📊 Probability Score: {probability}%  (dur={clip_duration:.1f}s→{duration_score:.2f}, "
+          f"density={density_score:.2f}, sustain={sustainability_score:.2f}, type={type_score:.2f})")
+    return probability
+
 # ========================
 # SSH CONFIG (Only if client)
 # ========================
@@ -859,11 +971,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            LEANING_ACTION, dest_path, detection_frames=lean_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, LEANING_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, LEANING_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                     else:
@@ -932,11 +1046,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            PASSING_ACTION, dest_path, detection_frames=passing_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, PASSING_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, PASSING_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                     else:
@@ -1005,11 +1121,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            TURNING_ACTION, dest_path, detection_frames=turning_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, TURNING_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, TURNING_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                     else:
@@ -1078,11 +1196,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            HAND_RAISE_ACTION, dest_path, detection_frames=hand_raise_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, HAND_RAISE_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, HAND_RAISE_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                     else:
@@ -1166,11 +1286,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            CHEAT_MATERIAL_ACTION, dest_path, detection_frames=cheat_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, CHEAT_MATERIAL_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, CHEAT_MATERIAL_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                         print(f"✅ DATABASE SAVED: {CHEAT_MATERIAL_ACTION} - {proof_filename}")
@@ -1240,11 +1362,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            PEEKING_ACTION, dest_path, detection_frames=peeking_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, PEEKING_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, PEEKING_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                         print(f"✅ DATABASE SAVED: {PEEKING_ACTION} - {proof_filename}")
@@ -1313,11 +1437,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            TALKING_ACTION, dest_path, detection_frames=talking_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, TALKING_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, TALKING_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                         print(f"✅ DATABASE SAVED: {TALKING_ACTION} - {proof_filename}")
@@ -1388,11 +1514,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            SUSPICIOUS_ACTION, dest_path, detection_frames=suspicious_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, SUSPICIOUS_ACTION, proof_filename, hall_id, False)
+                        val = (date_db, time_db, SUSPICIOUS_ACTION, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                         print(f"✅ DATABASE SAVED: {SUSPICIOUS_ACTION} - {proof_filename}")
@@ -1554,11 +1682,13 @@ try:
                         if IS_CLIENT:
                             remote_dest = f"./AIInvigilator/media/{proof_filename}"
                             scp.put(local_temp, remote_dest)
+                        prob_score = calculate_malpractice_probability_live(
+                            ACTION_MOBILE, dest_path, detection_frames=mobile_frames, fps=30)
                         sql = """
-                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified, probability_score)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (date_db, time_db, ACTION_MOBILE, proof_filename, hall_id, False)
+                        val = (date_db, time_db, ACTION_MOBILE, proof_filename, hall_id, False, prob_score)
                         cursor.execute(sql, val)
                         db.commit()
                     else:

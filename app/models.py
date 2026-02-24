@@ -30,6 +30,7 @@ class MalpraticeDetection(models.Model):
     is_malpractice = models.BooleanField(null=True)
     verified = models.BooleanField(default=False)
     lecture_hall = models.ForeignKey(LectureHall, on_delete=models.SET_NULL, null=True, blank=True)
+    probability_score = models.FloatField(null=True, blank=True, help_text="AI-computed probability of malpractice (0-100)")
     def __str__(self):
         return f"{self.malpractice} - {self.date} {self.time}"
 

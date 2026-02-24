@@ -26,9 +26,71 @@ import subprocess
 import tempfile
 from .utils import RUNNING_SCRIPTS 
 import time
+import cv2
 
 # Global stop event
 stop_event = Event()
+
+
+def calculate_retroactive_probability(log):
+    """Calculate probability score for existing logs that don't have one.
+    
+    Uses available data (video file duration + malpractice type) since
+    detection metadata wasn't tracked for older logs.
+    """
+    # Type-based prior probabilities
+    type_priors = {
+        'Mobile Phone Detected': 0.80,
+        'Turning Back': 0.70,
+        'Leaning': 0.60,
+        'Passing Paper': 0.55,
+        'Hand Raised': 0.45,
+    }
+    type_score = type_priors.get(log.malpractice, 0.50)
+    
+    # Try to get clip duration from video file
+    clip_duration = 0.0
+    if log.proof:
+        video_path = os.path.join(settings.MEDIA_ROOT, log.proof)
+        if os.path.exists(video_path):
+            try:
+                cap = cv2.VideoCapture(video_path)
+                if cap.isOpened():
+                    total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                    clip_duration = total_frames / fps if fps > 0 else 0
+                    cap.release()
+            except:
+                pass
+    
+    # Duration scoring
+    if clip_duration >= 10:
+        duration_score = 1.0
+    elif clip_duration >= 6:
+        duration_score = 0.90
+    elif clip_duration >= 4:
+        duration_score = 0.75
+    elif clip_duration >= 2:
+        duration_score = 0.55
+    elif clip_duration >= 1:
+        duration_score = 0.30
+    else:
+        duration_score = 0.20
+    
+    # For retroactive calculation, use simplified 2-factor model:
+    # 60% clip duration + 40% type prior
+    probability = (duration_score * 0.60 + type_score * 0.40) * 100
+    probability = max(0.0, min(100.0, round(probability, 1)))
+    
+    return probability
+
+
+def ensure_probability_scores(logs_queryset):
+    """Fill in probability scores for any logs that don't have one yet."""
+    logs_without_score = logs_queryset.filter(probability_score__isnull=True)
+    for log in logs_without_score:
+        log.probability_score = calculate_retroactive_probability(log)
+        log.save(update_fields=['probability_score'])
 
 def is_admin(user):
     return user.is_superuser
@@ -351,6 +413,7 @@ def malpractice_log(request):
     faculty_filter = request.GET.get('faculty', '').strip()
     assignment_filter = request.GET.get('assigned', '').strip()
     review_filter = request.GET.get('review', '').strip() or 'not_reviewed'
+    probability_filter = request.GET.get('probability', '').strip()
 
 
     # Base Queryset based on user role
@@ -368,6 +431,9 @@ def malpractice_log(request):
             verified=True,
             is_malpractice=True
         )
+
+    # Ensure all logs have probability scores (retroactive calculation)
+    ensure_probability_scores(logs)
 
     # Apply Filtering
     if date_filter:
@@ -390,6 +456,13 @@ def malpractice_log(request):
             logs = logs.filter(lecture_hall__assigned_teacher__isnull=False)
         elif assignment_filter.lower() == "unassigned":
             logs = logs.filter(lecture_hall__assigned_teacher__isnull=True)
+    
+    # Apply probability filter
+    if probability_filter:
+        if probability_filter == 'above_50':
+            logs = logs.filter(probability_score__gte=50)
+        elif probability_filter == 'below_50':
+            logs = logs.filter(probability_score__lt=50)
 
     # if review_filter:
     #     if review_filter.lower() == 'reviewed':
@@ -420,7 +493,8 @@ def malpractice_log(request):
         'query': query,
         'faculty_filter': faculty_filter,
         'assignment_filter': assignment_filter,
-        'review_filter': review_filter,  # Pass review filter to template
+        'review_filter': review_filter,
+        'probability_filter': probability_filter,
         'faculty_list': User.objects.filter(teacherprofile__isnull=False, is_superuser=False),
         'buildings': LectureHall.objects.values_list('building', flat=True).distinct(),
     }
@@ -516,6 +590,77 @@ def review_malpractice(request):
     except Exception as e:
         print(f"[EXCEPTION] Unexpected error in review_malpractice: {e}")
         return JsonResponse({'success': False, 'error': 'Internal server error'})
+
+
+@csrf_exempt
+@login_required
+@user_passes_test(is_admin)
+def ai_bulk_action(request):
+    """Bulk action based on AI probability scores.
+    
+    Two actions:
+    - 'approve_high': Send all logs with probability >= 50% to Reviewed as Malpractice
+    - 'dismiss_low': Flag all logs with probability < 50% as Not Malpractice (reviewed)
+    """
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
+    
+    try:
+        data = json.loads(request.body)
+        action = data.get('action')
+        
+        if action not in ['approve_high', 'dismiss_low']:
+            return JsonResponse({'status': 'error', 'message': 'Invalid action'})
+        
+        # Only act on non-reviewed logs
+        unreviewed_logs = MalpraticeDetection.objects.filter(verified=False)
+        
+        # Ensure all have probability scores
+        ensure_probability_scores(unreviewed_logs)
+        
+        if action == 'approve_high':
+            # Approve all logs with probability >= 50% as malpractice
+            high_prob_logs = unreviewed_logs.filter(probability_score__gte=50)
+            count = high_prob_logs.count()
+            
+            # Send notifications for each approved log that has an assigned teacher
+            for log in high_prob_logs:
+                log.verified = True
+                log.is_malpractice = True
+                log.save()
+                
+                if log.lecture_hall and log.lecture_hall.assigned_teacher:
+                    notification_thread = Thread(
+                        target=send_notifications_background, args=(log.id,)
+                    )
+                    notification_thread.daemon = True
+                    notification_thread.start()
+            
+            return JsonResponse({
+                'status': 'success', 
+                'action': 'approve_high',
+                'count': count,
+                'message': f'{count} log(s) with ≥50% probability approved as malpractice'
+            })
+        
+        elif action == 'dismiss_low':
+            # Dismiss all logs with probability < 50% as not malpractice
+            low_prob_logs = unreviewed_logs.filter(probability_score__lt=50)
+            count = low_prob_logs.count()
+            low_prob_logs.update(verified=True, is_malpractice=False)
+            
+            return JsonResponse({
+                'status': 'success',
+                'action': 'dismiss_low', 
+                'count': count,
+                'message': f'{count} log(s) with <50% probability dismissed as non-malpractice'
+            })
+    
+    except json.JSONDecodeError:
+        return JsonResponse({'status': 'error', 'message': 'Invalid JSON'})
+    except Exception as e:
+        print(f"[ERROR] AI bulk action failed: {e}")
+        return JsonResponse({'status': 'error', 'message': 'Internal server error'})
 
 
 @csrf_exempt

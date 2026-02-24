@@ -40,6 +40,8 @@
     border-radius: 8px;
     padding: 20px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Table Styling */
@@ -47,6 +49,7 @@
     width: 100%;
     border-collapse: collapse;
     margin: 0;
+    min-width: 1000px;
   }
 
   table.table th {
@@ -212,6 +215,50 @@
   .reviewing-row {
     transition: opacity 0.4s ease, transform 0.4s ease;
   }
+
+  /* Probability Score Styling */
+  .prob-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    min-width: 55px;
+    text-align: center;
+  }
+  .prob-high {
+    background-color: #dc3545;
+    color: #fff;
+  }
+  .prob-medium {
+    background-color: #ffc107;
+    color: #212529;
+  }
+  .prob-low {
+    background-color: #28a745;
+    color: #fff;
+  }
+
+  /* AI Actions Button */
+  .btn-ai-actions {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border: none;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 6px;
+    transition: all 0.3s ease;
+  }
+  .btn-ai-actions:hover {
+    background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  }
+  .ai-modal-icon {
+    font-size: 1.2rem;
+    margin-right: 4px;
+  }
 </style>
 
 <section class="malpractice-section">
@@ -253,7 +300,7 @@
             </select>
           </div>
           <!-- Filter by Malpractice Type -->
-          <div class="form-group col-md-3">
+          <div class="form-group col-md-2">
             <label for="malpractice_type">Malpractice Type:</label>
             <select name="malpractice_type" id="malpractice_type" class="form-control">
               <option value="">All Types</option>
@@ -263,8 +310,17 @@
               <option value="Turning Back" {% if malpractice_filter == 'Turning Back' %}selected{% endif %}>Turning Back</option>
             </select>
           </div>
+          <!-- Filter by Probability -->
+          <div class="form-group col-md-2">
+            <label for="probability">Filter by Probability:</label>
+            <select name="probability" id="probability" class="form-control">
+              <option value="">All</option>
+              <option value="above_50" {% if probability_filter == 'above_50' %}selected{% endif %}>Above 50%</option>
+              <option value="below_50" {% if probability_filter == 'below_50' %}selected{% endif %}>Below 50%</option>
+            </select>
+          </div>
           <!-- Assigned Faculty -->
-          <div class="form-group col-md-4">
+          <div class="form-group col-md-3">
             <label for="faculty">Assigned Faculty:</label>
             <select name="faculty" id="faculty" class="form-control">
               <option value="">All Faculty</option>
@@ -337,6 +393,15 @@
               <option value="Turning Back" {% if malpractice_filter == 'Turning Back' %}selected{% endif %}>Turning Back</option>
             </select>
           </div>
+          <!-- Filter by Probability -->
+          <div class="form-group col-md-2">
+            <label for="probability">Probability:</label>
+            <select name="probability" id="probability" class="form-control">
+              <option value="">All</option>
+              <option value="above_50" {% if probability_filter == 'above_50' %}selected{% endif %}>Above 50%</option>
+              <option value="below_50" {% if probability_filter == 'below_50' %}selected{% endif %}>Below 50%</option>
+            </select>
+          </div>
           <!-- Building -->
           <div class="form-group col-md-2">
             <label for="building">Building:</label>
@@ -387,6 +452,25 @@
     <!-- Delete Logs Options (Admin Only) -->
     {% if request.user.is_superuser %}
     <div class="text-right mb-3">
+      <!-- AI Actions Button -->
+      {% if review_filter != 'reviewed' %}
+      <div class="btn-group mr-2">
+        <button type="button" class="btn btn-ai-actions dropdown-toggle" data-toggle="dropdown" aria-haspopup="true"
+          aria-expanded="false">
+          <i class="fas fa-robot ai-modal-icon"></i> AI Actions
+        </button>
+        <div class="dropdown-menu dropdown-menu-right">
+          <a class="dropdown-item" href="#" onclick="showAIActionModal('approve_high'); return false;">
+            <i class="fas fa-check-circle text-success"></i> Approve High Probability Logs (≥50%)
+          </a>
+          <div class="dropdown-divider"></div>
+          <a class="dropdown-item" href="#" onclick="showAIActionModal('dismiss_low'); return false;">
+            <i class="fas fa-times-circle text-danger"></i> Dismiss Low Probability Logs (<50%)
+          </a>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="btn-group">
         <button type="button" class="btn btn-danger dropdown-toggle" data-toggle="dropdown" aria-haspopup="true"
           aria-expanded="false">
@@ -432,6 +516,7 @@
             <th scope="col">Date</th>
             <th scope="col">Time</th>
             <th scope="col">Malpractice</th>
+            <th scope="col">Probability of Malpractice</th>
             <th scope="col">Lecture Hall</th>
             <th scope="col">Assigned Faculty</th>
             <th scope="col">View</th>
@@ -453,6 +538,19 @@
             <td>{{ i.date }}</td>
             <td>{{ i.time }}</td>
             <td>{{ i.malpractice }}</td>
+            <td>
+              {% if i.probability_score != None %}
+                {% if i.probability_score >= 70 %}
+                  <span class="prob-badge prob-high">{{ i.probability_score }}%</span>
+                {% elif i.probability_score >= 50 %}
+                  <span class="prob-badge prob-medium">{{ i.probability_score }}%</span>
+                {% else %}
+                  <span class="prob-badge prob-low">{{ i.probability_score }}%</span>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
             <td>
               {% if i.lecture_hall %}
               {{ i.lecture_hall.building }} - {{ i.lecture_hall.hall_name }}
@@ -513,7 +611,7 @@
           {% endfor %}
           {% else %}
           <tr>
-            <td colspan="{% if is_admin %}11{% else %}10{% endif %}" class="text-center text-muted">
+            <td colspan="{% if is_admin %}12{% else %}11{% endif %}" class="text-center text-muted">
               No malpractice logs found.
             </td>
           </tr>
@@ -799,6 +897,70 @@
     $('#deleteSelectedModal').modal('show');
   }
 
+  // AI Action Modal
+  var pendingAIAction = null;
+
+  function showAIActionModal(action) {
+    pendingAIAction = action;
+    if (action === 'approve_high') {
+      document.getElementById('aiActionTitle').textContent = 'Approve High Probability Logs';
+      document.getElementById('aiActionDescription').textContent =
+        'This will mark all malpractice logs with probability \u2265 50% as Reviewed and confirmed Malpractice.';
+      document.getElementById('aiActionDetails').textContent =
+        'These logs will move to the Reviewed section with "Is Malpractice = Yes". Notifications will be sent to relevant faculty.';
+    } else if (action === 'dismiss_low') {
+      document.getElementById('aiActionTitle').textContent = 'Dismiss Low Probability Logs';
+      document.getElementById('aiActionDescription').textContent =
+        'This will mark all malpractice logs with probability < 50% as Reviewed and flagged as Non-Malpractice.';
+      document.getElementById('aiActionDetails').textContent =
+        'These logs will move to the Reviewed section with "Is Malpractice = No". No notifications will be sent.';
+    }
+    $('#aiActionModal').modal('show');
+  }
+
+  function executeAIAction() {
+    if (!pendingAIAction) return;
+    var confirmBtn = document.getElementById('aiActionConfirmBtn');
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+
+    fetch('/ai_bulk_action/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}'
+      },
+      body: JSON.stringify({ action: pendingAIAction })
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = '<i class="fas fa-robot"></i> Confirm';
+      // Wait for modal to fully close before showing alert/reload
+      $('#aiActionModal').on('hidden.bs.modal', function () {
+        $(this).off('hidden.bs.modal'); // Remove handler to avoid stacking
+        if (data.status === 'success') {
+          if (data.count > 0) {
+            alert(data.message);
+          }
+          location.reload();
+        } else {
+          alert('Error: ' + (data.message || 'Unknown error'));
+        }
+      });
+      $('#aiActionModal').modal('hide');
+    })
+    .catch(function(err) {
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = '<i class="fas fa-robot"></i> Confirm';
+      $('#aiActionModal').on('hidden.bs.modal', function () {
+        $(this).off('hidden.bs.modal');
+        alert('Request failed: ' + err);
+      });
+      $('#aiActionModal').modal('hide');
+    });
+  }
+
   // DELETE MALPRACTICE
   function deleteMalpractice(logId) {
     if (!confirm('Are you sure you want to delete this malpractice log? This action cannot be undone.')) {
@@ -987,6 +1149,35 @@
             <i class="fas fa-trash"></i> Yes, Delete Selected
           </button>
         </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI Action Confirmation Modal -->
+<div class="modal fade" id="aiActionModal" tabindex="-1" role="dialog" aria-labelledby="aiActionModalLabel"
+  aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-bottom: none; border-radius: 8px 8px 0 0;">
+        <h5 class="modal-title" id="aiActionModalLabel">
+          <i class="fas fa-robot"></i> <span id="aiActionTitle">AI Action</span>
+        </h5>
+        <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="aiActionDescription" class="font-weight-bold"></p>
+        <p id="aiActionDetails" class="text-muted"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+        <button type="button" class="btn btn-ai-actions" id="aiActionConfirmBtn" onclick="executeAIAction()">
+          <i class="fas fa-robot"></i> Confirm
+        </button>
       </div>
     </div>
   </div>

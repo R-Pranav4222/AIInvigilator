@@ -20,6 +20,7 @@ urlpatterns = [
     path('logout/',views.logout, name='logout'),
     path('malpractice_log/',views.malpractice_log, name='malpractice_log'),
     path('review_malpractice/', views.review_malpractice, name='review_malpractice'),
+    path('ai_bulk_action/', views.ai_bulk_action, name='ai_bulk_action'),
     path('delete_malpractice/<int:log_id>/', views.delete_malpractice, name='delete_malpractice'),
     path('delete_all_logs/', views.delete_all_logs, name='delete_all_logs'),
     path('delete_selected_logs/', views.delete_selected_logs, name='delete_selected_logs'),
