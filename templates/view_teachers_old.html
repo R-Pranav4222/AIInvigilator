@@ -1,45 +1,72 @@
 {% include 'header.html' %}
 {% block content %}
 <style>
-  .view-teachers-section { padding: 100px 0 40px; min-height: 80vh; }
+  body {
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  }
+  .view-teachers-section {
+    padding: 40px 0;
+    min-height: 70vh;
+  }
   .section-heading {
     text-transform: uppercase;
-    font-weight: 800;
-    letter-spacing: 3px;
+    font-weight: 700;
+    letter-spacing: 2px;
     margin-bottom: 2rem;
-    color: var(--text-primary);
+    color: #333;
     text-align: center;
     position: relative;
-    font-size: 1.5rem;
   }
   .section-heading::after {
     content: "";
     display: block;
-    width: 60px;
+    width: 80px;
     height: 3px;
-    background: var(--accent-gradient);
-    margin: 12px auto 0;
-    border-radius: 2px;
+    background-color: #007bff;
+    margin: 10px auto 0;
   }
+  /* Filter Bar – same as Manage Lecture Halls */
+  .filter-bar {
+    /* background: #f8f9fa; */
+    padding: 20px;
+    /* border-radius: 8px; */
+    /* margin-bottom: 30px; */
+    /* box-shadow: 0 0 10px rgba(0,0,0,0.1); */
+  }
+  .filter-bar label {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+  .filter-bar .form-control {
+    border-radius: 6px;
+  }
+  .filter-bar .btn {
+    height: 38px;
+  }
+  /* Table Container – same as Manage Lecture Halls */
   .table-container {
-    background: var(--bg-glass);
-    backdrop-filter: blur(10px);
-    border-radius: var(--radius-lg);
-    padding: 0;
-    border: 1px solid var(--border-subtle);
-    overflow-x: auto;
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+  }
+  .table {
+    margin-bottom: 0;
+    width: 100%;
+    border-collapse: collapse;
   }
   .table th {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-muted);
-    padding: 14px 12px;
-    white-space: nowrap;
+    background-color: #f7f9fc;
+    font-weight: 600;
+    text-align: center;
+    padding: 12px;
+    border-bottom: 2px solid #dee2e6;
   }
   .table td {
-    font-size: 0.85rem;
+    text-align: center;
+    vertical-align: middle;
     padding: 12px;
+    border-top: 1px solid #dee2e6;
   }
 </style>
 

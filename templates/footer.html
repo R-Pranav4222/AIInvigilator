@@ -1,0 +1,67 @@
+<!-- Footer -->
+<footer class="footer-dark">
+  <div class="footer-glow"></div>
+  <div class="container">
+    <div class="row">
+      <!-- Brand -->
+      <div class="col-lg-4 col-md-6 mb-4">
+        <div class="footer-brand">
+          <i class="fas fa-shield-halved"></i>
+          <span>AIInvigilator</span>
+        </div>
+        <p class="footer-desc">
+          AI-powered exam surveillance system with real-time malpractice detection, 
+          behavioral analysis, and intelligent probability scoring.
+        </p>
+        <div class="footer-socials">
+          <a href="#"><i class="fab fa-github"></i></a>
+          <a href="#"><i class="fab fa-linkedin-in"></i></a>
+          <a href="#"><i class="fab fa-twitter"></i></a>
+        </div>
+      </div>
+
+      <!-- Quick Links -->
+      <div class="col-lg-2 col-md-6 mb-4">
+        <h6 class="footer-heading">Quick Links</h6>
+        <ul class="footer-links">
+          <li><a href="{% url 'index' %}">Home</a></li>
+          {% if request.user.is_authenticated %}
+          <li><a href="{% url 'malpractice_log' %}">Detection Logs</a></li>
+          <li><a href="{% url 'profile' %}">My Profile</a></li>
+          {% else %}
+          <li><a href="{% url 'login' %}">Login</a></li>
+          <li><a href="{% url 'teacher_register' %}">Register</a></li>
+          {% endif %}
+        </ul>
+      </div>
+
+      <!-- Features -->
+      <div class="col-lg-3 col-md-6 mb-4">
+        <h6 class="footer-heading">Features</h6>
+        <ul class="footer-links">
+          <li><a href="#">Real-Time Detection</a></li>
+          <li><a href="#">Video Analysis</a></li>
+          <li><a href="#">AI Probability Scoring</a></li>
+          <li><a href="#">Multi-Camera Support</a></li>
+        </ul>
+      </div>
+
+      <!-- Technology -->
+      <div class="col-lg-3 col-md-6 mb-4">
+        <h6 class="footer-heading">Powered By</h6>
+        <div class="tech-tags">
+          <span class="tech-tag">YOLOv8</span>
+          <span class="tech-tag">YOLOv11</span>
+          <span class="tech-tag">MediaPipe</span>
+          <span class="tech-tag">Django</span>
+          <span class="tech-tag">OpenCV</span>
+          <span class="tech-tag">CUDA</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p>&copy; 2025 AIInvigilator. All Rights Reserved.</p>
+    </div>
+  </div>
+</footer>

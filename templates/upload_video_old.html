@@ -1,231 +1,200 @@
 {% include 'header.html' %}
 {% load static %}
 
-<style>
-  .upload-container {
-    padding-top: 100px;
-    padding-bottom: 60px;
-  }
-  .upload-card {
-    background: var(--bg-glass);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid var(--border-default);
-    border-radius: 16px;
-    padding: 40px 30px;
-    position: relative;
-    overflow: hidden;
-  }
-  .upload-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: var(--accent-gradient);
-  }
-  .upload-heading {
-    font-size: 2.2rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    text-align: center;
-    margin-bottom: 30px;
-  }
-  .upload-heading::after {
-    content: "";
-    display: block;
-    width: 80px;
-    height: 3px;
-    background: var(--accent-gradient);
-    margin: 12px auto 0;
-    border-radius: 10px;
-  }
-  .info-box {
-    background: rgba(0, 212, 255, 0.06);
-    padding: 18px;
-    border-radius: 12px;
-    margin-bottom: 20px;
-    border-left: 4px solid var(--accent-cyan);
-    border: 1px solid rgba(0, 212, 255, 0.15);
-    border-left: 4px solid var(--accent-cyan);
-  }
-  .info-box h6 {
-    margin: 0 0 10px 0;
-    color: var(--accent-cyan);
-    font-weight: 600;
-  }
-  .info-box ul {
-    margin: 0;
-    padding-left: 20px;
-    font-size: 0.92rem;
-    color: var(--text-secondary);
-  }
-  .info-box li { margin-bottom: 4px; }
-  .info-box strong { color: var(--text-primary); }
-  .drop-zone {
-    border: 2px dashed rgba(0, 212, 255, 0.35);
-    border-radius: 12px;
-    padding: 60px 20px;
-    text-align: center;
-    background: rgba(0, 212, 255, 0.03);
-    transition: all 0.3s ease;
-    cursor: pointer;
-    margin-bottom: 30px;
-  }
-  .drop-zone:hover {
-    border-color: var(--accent-cyan);
-    background: rgba(0, 212, 255, 0.06);
-  }
-  .drop-zone.dragover {
-    background: rgba(0, 212, 255, 0.1);
-    border-color: var(--accent-cyan);
-    transform: scale(1.02);
-    box-shadow: 0 0 30px rgba(0, 212, 255, 0.15);
-  }
-  .drop-zone i {
-    font-size: 4rem;
-    color: var(--accent-cyan);
-    margin-bottom: 20px;
-  }
-  .drop-zone p {
-    font-size: 1.1rem;
-    color: var(--text-secondary);
-    margin: 8px 0;
-  }
-  .file-input { display: none; }
-  .selected-file {
-    background: rgba(0, 212, 255, 0.08);
-    border: 1px solid rgba(0, 212, 255, 0.2);
-    padding: 18px 20px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-    display: none;
-    color: var(--text-primary);
-  }
-  .selected-file.show { display: flex; align-items: center; }
-  .selected-file i {
-    color: var(--accent-cyan);
-    font-size: 1.5rem;
-    margin-right: 12px;
-  }
-  .selected-file #fileName { flex: 1; }
-  .process-btn {
-    font-size: 1.1rem;
-    font-weight: 600;
-    padding: 14px 40px;
-    border-radius: 10px;
-    background: var(--accent-gradient);
-    color: white;
-    border: none;
-    width: 100%;
-    transition: all 0.3s ease;
-    display: none;
-    letter-spacing: 0.5px;
-  }
-  .process-btn.show { display: block; }
-  .process-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(0, 212, 255, 0.3);
-    color: white;
-  }
-  .process-btn:disabled {
-    background: var(--bg-surface);
-    color: var(--text-muted);
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-  }
-  .progress-section {
-    margin-top: 30px;
-    display: none;
-  }
-  .progress-section.show { display: block; }
-  .video-stream {
-    width: 100%;
-    max-width: 100%;
-    border-radius: 12px;
-    margin-bottom: 20px;
-    display: none;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
-    border: 1px solid var(--border-default);
-  }
-  .video-stream.show { display: block; }
-  .progress-bar-container {
-    background: var(--bg-surface);
-    border-radius: 10px;
-    height: 30px;
-    overflow: hidden;
-    margin-bottom: 20px;
-    border: 1px solid var(--border-default);
-  }
-  .progress-bar {
-    background: var(--accent-gradient);
-    height: 100%;
-    width: 0%;
-    transition: width 0.3s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: 600;
-  }
-  .status-message {
-    text-align: center;
-    font-size: 1.1rem;
-    color: var(--text-primary);
-    margin-bottom: 20px;
-  }
-  .detections-list {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: 10px;
-    padding: 20px;
-    max-height: 400px;
-    overflow-y: auto;
-  }
-  .detections-list::-webkit-scrollbar { width: 6px; }
-  .detections-list::-webkit-scrollbar-track { background: transparent; }
-  .detections-list::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
-  .detection-item {
-    background: var(--bg-glass);
-    padding: 15px;
-    margin-bottom: 10px;
-    border-radius: 8px;
-    border-left: 4px solid #dc3545;
-    animation: slideIn 0.3s ease;
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    border-left: 4px solid #dc3545;
-  }
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(-20px); }
-    to { opacity: 1; transform: translateX(0); }
-  }
-  .detection-item.mobile { border-left-color: #ff8c00; }
-  .detection-item.talking { border-left-color: #00ff00; }
-  .detection-item.peeking { border-left-color: #ff00ff; }
-  .detection-item.cheat_material { border-left-color: #ff69b4; }
-  .detection-item.suspicious { border-left-color: #ffff00; }
-  .lecture-hall-select {
-    margin-bottom: 20px;
-    padding: 12px 16px;
-    border-radius: 10px;
-    border: 1px solid var(--border-default);
-    font-size: 1rem;
-    width: 100%;
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    transition: border-color 0.3s ease;
-  }
-  .lecture-hall-select:focus {
-    outline: none;
-    border-color: var(--accent-cyan);
-    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
-  }
-  .lecture-hall-select option {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-  }
-</style>
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Upload Video for Analysis</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #f8f9fa 0%, #e0e0e0 100%);
+      font-family: 'Poppins', sans-serif;
+    }
+    .upload-container {
+      margin-top: 80px;
+      margin-bottom: 60px;
+    }
+    .upload-card {
+      background-color: #ffffff;
+      border-radius: 12px;
+      padding: 40px 30px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    }
+    .upload-heading {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #333;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .upload-heading::after {
+      content: "";
+      display: block;
+      width: 80px;
+      height: 4px;
+      background-color: #28a745;
+      margin: 12px auto 0;
+      border-radius: 10px;
+    }
+    .drop-zone {
+      border: 3px dashed #28a745;
+      border-radius: 12px;
+      padding: 60px 20px;
+      text-align: center;
+      background-color: #f8f9fa;
+      transition: all 0.3s ease;
+      cursor: pointer;
+      margin-bottom: 30px;
+    }
+    .drop-zone.dragover {
+      background-color: #e8f5e9;
+      border-color: #1e7e34;
+      transform: scale(1.02);
+    }
+    .drop-zone i {
+      font-size: 4rem;
+      color: #28a745;
+      margin-bottom: 20px;
+    }
+    .drop-zone p {
+      font-size: 1.2rem;
+      color: #666;
+      margin: 10px 0;
+    }
+    .file-input {
+      display: none;
+    }
+    .selected-file {
+      background-color: #e8f5e9;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .selected-file.show {
+      display: block;
+    }
+    .selected-file i {
+      color: #28a745;
+      font-size: 1.5rem;
+      margin-right: 10px;
+    }
+    .process-btn {
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding: 14px 40px;
+      border-radius: 8px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      width: 100%;
+      transition: background-color 0.3s ease;
+      display: none;
+    }
+    .process-btn.show {
+      display: block;
+    }
+    .process-btn:hover {
+      background-color: #218838;
+    }
+    .process-btn:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+    }
+    .progress-section {
+      margin-top: 30px;
+      display: none;
+    }
+    .progress-section.show {
+      display: block;
+    }
+    .video-stream {
+      width: 100%;
+      max-width: 100%;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: none;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+    .video-stream.show {
+      display: block;
+    }
+    .progress-bar-container {
+      background-color: #e9ecef;
+      border-radius: 10px;
+      height: 30px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .progress-bar {
+      background: linear-gradient(90deg, #28a745 0%, #20c997 100%);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+    }
+    .status-message {
+      text-align: center;
+      font-size: 1.1rem;
+      color: #333;
+      margin-bottom: 20px;
+    }
+    .detections-list {
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      padding: 20px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .detection-item {
+      background-color: white;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      border-left: 4px solid #dc3545;
+      animation: slideIn 0.3s ease;
+    }
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    .detection-item.mobile {
+      border-left-color: #ff8c00;
+    }
+    .detection-item.talking {
+      border-left-color: #00ff00;
+    }
+    .detection-item.peeking {
+      border-left-color: #ff00ff;
+    }
+    .detection-item.cheat_material {
+      border-left-color: #ff69b4;
+    }
+    .detection-item.suspicious {
+      border-left-color: #ffff00;
+    }
+    .lecture-hall-select {
+      margin-bottom: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 2px solid #28a745;
+      font-size: 1rem;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
 
 <div class="container upload-container">
   <div class="row justify-content-center">
@@ -234,12 +203,12 @@
         <h1 class="upload-heading">Upload Video for Malpractice Detection</h1>
         
         <!-- Info Box -->
-        <div class="info-box">
-          <h6><i class="fas fa-info-circle"></i> Ultra-Fast Threaded Pipeline</h6>
-          <ul>
-            <li><strong>~20-25 seconds</strong> for a 15-second video (FP16 + threaded pipeline)</li>
-            <li><strong>Mobile Detection:</strong> High-res 640px scan with 0.25 confidence (catches phones on desks)</li>
-            <li><strong>Pose Detection:</strong> Fast 416px scan for body actions (leaning, turning, etc.)</li>
+        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #2196f3;">
+          <h6 style="margin: 0 0 10px 0; color: #1976d2;"><i class="fas fa-info-circle"></i> Ultra-Fast Threaded Pipeline</h6>
+          <ul style="margin: 0; padding-left: 20px; font-size: 0.95rem; color: #333;">
+            <li><strong>🚀 ~20-25 seconds</strong> for a 15-second video (FP16 + threaded pipeline)</li>
+            <li><strong>📱 Mobile Detection:</strong> High-res 640px scan with 0.25 confidence (catches phones on desks)</li>
+            <li><strong>⚡ Pose Detection:</strong> Fast 416px scan for body actions (leaning, turning, etc.)</li>
             <li><strong>Pre-Roll Buffer:</strong> Captures 1.5 seconds BEFORE action detection</li>
             <li><strong>Grace Period:</strong> Keeps recording ~3 seconds after action stops</li>
             <li><strong>Threaded:</strong> GPU processes at max speed, zero streaming overhead</li>
@@ -248,7 +217,7 @@
         
         <!-- Lecture Hall Selection -->
         <div class="form-group">
-          <label for="lecture-hall-select" class="form-label-dark" style="font-size: 1rem; margin-bottom: 10px;">Select Lecture Hall:</label>
+          <label for="lecture-hall-select" style="font-size: 1.1rem; font-weight: 600; margin-bottom: 10px;">Select Lecture Hall:</label>
           <select class="lecture-hall-select" id="lecture-hall-select">
             <option value="">-- Select Hall --</option>
             <option value="1">Hall 1</option>
@@ -262,7 +231,7 @@
           <i class="fas fa-cloud-upload-alt"></i>
           <p><strong>Drag and drop your video here</strong></p>
           <p>or click to browse</p>
-          <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 10px;">Supported formats: MP4, AVI, MKV, MOV</p>
+          <p style="font-size: 0.9rem; color: #999; margin-top: 10px;">Supported formats: MP4, AVI, MKV, MOV</p>
         </div>
 
         <!-- Hidden file input -->
@@ -291,7 +260,7 @@
           <!-- Live Video Stream -->
           <img class="video-stream" id="videoStream" src="" alt="Processing video...">
           
-          <h4 style="margin-bottom: 15px; margin-top: 20px; color: var(--text-primary);">Detection Summary:</h4>
+          <h4 style="margin-bottom: 15px; margin-top: 20px;">Detection Summary:</h4>
           <div class="detections-list" id="detectionsList">
             <p style="text-align: center; color: #999;">Detections will be uploaded to database in real-time...</p>
           </div>
@@ -304,32 +273,32 @@
 <!-- Completion Modal -->
 <div class="modal fade" id="completionModal" tabindex="-1" role="dialog" aria-labelledby="completionModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered" role="document">
-    <div class="modal-content" style="border-radius: 16px; border: 1px solid var(--border-default); background: var(--bg-surface);">
-      <div class="modal-header" style="background: var(--accent-gradient); color: white; border-radius: 14px 14px 0 0; border-bottom: none;">
+    <div class="modal-content" style="border-radius: 15px; border: 3px solid #28a745;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; border-radius: 12px 12px 0 0;">
         <h4 class="modal-title" id="completionModalLabel">
           <i class="fas fa-check-circle"></i> Processing Complete!
         </h4>
       </div>
       <div class="modal-body" style="padding: 30px; text-align: center;">
-        <div style="font-size: 4rem; color: var(--accent-cyan); margin-bottom: 20px;">
+        <div style="font-size: 4rem; color: #28a745; margin-bottom: 20px;">
           <i class="fas fa-check-circle"></i>
         </div>
-        <h5 id="completionMessage" style="margin-bottom: 20px; font-weight: 600; color: var(--text-primary);">Video Analysis Complete</h5>
-        <p id="completionDetails" style="font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 25px;">
+        <h5 id="completionMessage" style="margin-bottom: 20px; font-weight: 600;">Video Analysis Complete</h5>
+        <p id="completionDetails" style="font-size: 1.1rem; color: #666; margin-bottom: 25px;">
           All detected malpractices have been uploaded to the database.
         </p>
-        <div style="background: var(--bg-glass); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--border-default);">
-          <h6 style="margin-bottom: 10px; color: var(--accent-cyan);"><i class="fas fa-chart-bar"></i> Summary</h6>
-          <div id="detectionSummary" style="font-size: 1rem; color: var(--text-secondary);">
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+          <h6 style="margin-bottom: 10px; color: #28a745;"><i class="fas fa-chart-bar"></i> Summary</h6>
+          <div id="detectionSummary" style="font-size: 1rem; color: #333;">
             Processing results will appear here...
           </div>
         </div>
       </div>
-      <div class="modal-footer" style="border-top: 1px solid var(--border-default); padding: 20px 30px; justify-content: space-between;">
-        <button type="button" class="btn btn-glass" data-dismiss="modal" style="border-radius: 10px; padding: 10px 20px;">
+      <div class="modal-footer" style="border-top: none; padding: 0 30px 30px 30px; justify-content: space-between;">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal" style="border-radius: 8px; padding: 10px 20px;">
           <i class="fas fa-times"></i> Close
         </button>
-        <a href="{% url 'malpractice_log' %}" class="btn btn-accent" style="border-radius: 10px; padding: 10px 20px;">
+        <a href="{% url 'malpractice_log' %}" class="btn btn-success" style="border-radius: 8px; padding: 10px 20px;">
           <i class="fas fa-list-alt"></i> View Malpractice Logs
         </a>
       </div>
@@ -371,7 +340,7 @@ $(document).ready(function() {
     // Unbind ALL event handlers on stream element and clear its src
     $('#videoStream').off('load error').removeClass('show').removeAttr('src');
     $('#statusMessage').text('Processing video...');
-    $('#detectionsList').html('<p style="text-align: center; color: var(--text-muted);">Detections will be uploaded to database in real-time...</p>');
+    $('#detectionsList').html('<p style="text-align: center; color: #999;">Detections will be uploaded to database in real-time...</p>');
   }
   
   // Click to browse
@@ -451,7 +420,7 @@ $(document).ready(function() {
     // Show progress section
     $('#progressSection').addClass('show');
     $('#statusMessage').text('Uploading video...');
-    $('#detectionsList').html('<p style="text-align: center; color: var(--text-muted);">Uploading...</p>');
+    $('#detectionsList').html('<p style="text-align: center; color: #999;">Uploading...</p>');
     
     // Create form data
     const formData = new FormData();
@@ -506,7 +475,7 @@ $(document).ready(function() {
           // Set src AFTER binding handlers
           $stream.attr('src', streamUrl).addClass('show');
           
-          $('#detectionsList').html('<p style="text-align: center; color: var(--accent-cyan);"><i class="fas fa-check-circle"></i> Processing started!</p><p style="text-align: center; color: var(--text-secondary); margin-top: 10px;">Watch the video above for live detections. Results are being saved to the database.</p>');
+          $('#detectionsList').html('<p style="text-align: center; color: #28a745;"><i class="fas fa-check-circle"></i> Processing started!</p><p style="text-align: center; color: #666; margin-top: 10px;">Watch the video above for live detections. Results are being saved to the database.</p>');
         } else {
           $('#statusMessage').text('Error: ' + (response.message || 'Unknown error'));
           isProcessing = false;
@@ -532,4 +501,5 @@ $(document).ready(function() {
 });
 </script>
 
-{% include 'footer.html' %}
+</body>
+</html>

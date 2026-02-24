@@ -2,68 +2,64 @@
 {% load static %}
 {% block content %}
 
+<!-- Custom Styles -->
 <style>
-  .edit-profile-container { max-width: 800px; margin: 100px auto 60px; padding: 0 15px; }
+  body {
+    background: linear-gradient(135deg, #edf2f7 0%, #cfd9df 100%);
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .edit-profile-container {
+    max-width: 800px;
+    margin: 60px auto;
+    padding: 0 15px;
+  }
+
   .edit-profile-card {
-    background: var(--bg-glass);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-xl);
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
     padding: 40px;
-    transition: var(--transition-base);
-    position: relative;
-    overflow: hidden;
+    transition: transform 0.3s ease;
+    overflow: hidden; /* Ensure all content is contained */
   }
-  .edit-profile-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: var(--accent-gradient);
+  .edit-profile-card:hover {
+    transform: translateY(-5px);
   }
-  .edit-profile-card:hover { transform: translateY(-3px); box-shadow: var(--glow-subtle); }
+
   .edit-profile-heading {
-    font-size: 1.5rem;
-    font-weight: 800;
-    color: var(--text-primary);
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: #333;
     text-align: center;
-    border-bottom: 2px solid transparent;
-    border-image: var(--accent-gradient) 1;
+    border-bottom: 3px solid #007bff;
     padding-bottom: 15px;
     margin-bottom: 30px;
-    text-transform: uppercase;
-    letter-spacing: 2px;
   }
+
   .section-heading {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--text-secondary);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #555;
     margin-bottom: 15px;
-    border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 5px;
   }
-  .btn-submit {
-    background: var(--accent-gradient) !important;
-    border: none !important;
-    color: var(--text-inverse) !important;
-    font-weight: 600;
-    padding: 12px 25px;
-    border-radius: var(--radius-sm);
-    transition: var(--transition-base);
+
+  .form-group label {
+    font-weight: 500;
   }
-  .btn-submit:hover { box-shadow: 0 4px 15px rgba(0,212,255,0.3); transform: translateY(-1px); }
-  .btn-cancel {
-    background: var(--bg-surface) !important;
-    border: 1px solid var(--border-default) !important;
-    color: var(--text-secondary) !important;
-    font-weight: 600;
-    padding: 12px 25px;
-    border-radius: var(--radius-sm);
-    transition: var(--transition-base);
+  .form-control {
+    border-radius: 6px;
+    border: 1px solid #ced4da;
+    transition: all 0.3s ease;
   }
-  .btn-cancel:hover { border-color: var(--border-hover) !important; color: var(--text-primary) !important; }
+  .form-control:focus {
+    box-shadow: 0 0 5px rgba(0, 123, 255, 0.3);
+    border-color: #007bff;
+  }
+
+  /* Custom File Input: Force full width and prevent overflow */
   .form-control-file {
     display: block;
     width: 100%;
@@ -71,13 +67,56 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-secondary);
   }
+
+  /* Buttons */
+  .btn-submit {
+    background-color: #007bff;
+    border-color: #007bff;
+    font-weight: 600;
+    padding: 12px 25px;
+    border-radius: 6px;
+    transition: background-color 0.3s ease;
+    color: white;
+  }
+  .btn-submit:hover {
+    background-color: #0056b3;
+    border-color: #004992;
+  }
+  .btn-cancel {
+    background-color: #6c757d;
+    border-color: #6c757d;
+    font-weight: 600;
+    padding: 12px 25px;
+    border-radius: 6px;
+    transition: background-color 0.3s ease;
+    color: white;
+  }
+  .btn-cancel:hover {
+    background-color: #545b62;
+    border-color: #40474e;
+  }
+
+  /* Toast Container for Floating Notification */
   #toast-container {
     position: fixed;
-    top: 5rem;
+    top: 1rem;
     right: 1rem;
     z-index: 9999;
+  }
+  .topbar,
+  .navbar {
+    font-family: 'Open Sans', sans-serif !important;
+    /* You can add other header-specific rules if needed, e.g.: */
+    background-color: inherit !important;
+    color: inherit !important;
+  }
+
+  /* Optionally, scope page-specific styles so they do not affect the header */
+  .main-content {
+    /* Page-specific styling (e.g., for login or registration content) */
+    font-family: 'Poppins', sans-serif;
+    background: linear-gradient(135deg, #edf2f7 0%, #cfd9df 100%);
   }
 </style>
 

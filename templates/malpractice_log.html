@@ -1,190 +1,167 @@
 <!-- malpractice_logs.html -->
 {% include 'header.html' %}
 <style>
-  body {
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    margin: 0;
-    padding: 0;
-  }
-
-  /* Spacing after header */
+  /* Malpractice Log Dark Overrides */
   .malpractice-section {
-    padding: 60px 0 40px;
-    /* Extra top padding so content isn't hidden behind nav */
-    min-height: 70vh;
+    padding: 100px 0 40px;
+    min-height: 80vh;
   }
 
-  /* Section Heading */
   .malpractice-heading {
     text-transform: uppercase;
-    font-weight: 700;
-    letter-spacing: 2px;
+    font-weight: 800;
+    letter-spacing: 3px;
     margin-bottom: 2rem;
-    color: #333;
+    color: var(--text-primary);
     position: relative;
     text-align: center;
+    font-size: 1.5rem;
   }
 
   .malpractice-heading::after {
     content: "";
     display: block;
-    width: 80px;
+    width: 60px;
     height: 3px;
-    background-color: #007bff;
-    margin: 10px auto 0;
+    background: var(--accent-gradient);
+    margin: 12px auto 0;
+    border-radius: 2px;
   }
 
   /* Table Container */
   .table-container {
-    background: #fff;
-    border-radius: 8px;
-    padding: 20px;
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    background: var(--bg-glass);
+    backdrop-filter: blur(10px);
+    border-radius: var(--radius-lg);
+    padding: 0;
+    border: 1px solid var(--border-subtle);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Table Styling */
   table.table {
     width: 100%;
     border-collapse: collapse;
     margin: 0;
-    min-width: 1000px;
+    min-width: 1100px;
+    color: var(--text-primary);
   }
 
   table.table th {
-    background-color: #f7f9fc;
+    background: var(--bg-surface);
     font-weight: 600;
     text-align: center;
     vertical-align: middle;
-    padding: 12px;
-    border-bottom: 2px solid #dee2e6;
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
   }
 
   table.table td {
     text-align: center;
     vertical-align: middle;
     padding: 12px;
-    border-top: 1px solid #dee2e6;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
   }
 
-  /* Highlight rows for "reviewed" with subtle background */
+  table.table tbody tr:hover {
+    background: rgba(0, 212, 255, 0.03);
+  }
+
   .reviewed-row {
-    background-color: #f8f9fa !important;
+    background: rgba(16, 185, 129, 0.04) !important;
   }
 
   /* Buttons */
-  .btn {
-    padding: 6px 14px;
-    font-size: 0.9rem;
-    font-weight: 600;
-    border-radius: 5px;
-    margin: 0 2px;
-  }
-
   .btn-download {
-    background-color: #007bff;
-    border-color: #007bff;
+    background: var(--accent-gradient) !important;
+    border: none !important;
+    color: var(--text-inverse) !important;
     font-weight: 600;
-    transition: background-color 0.3s ease;
+    font-size: 0.8rem;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
   }
-
   .btn-download:hover {
-    background-color: #0056b3;
-    border-color: #004998;
+    box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+    transform: translateY(-1px);
   }
 
   .btn-delete {
-    background-color: #ff8c00;
-    border-color: #ff8c00;
-    color: white;
+    background: var(--danger-dim) !important;
+    border: 1px solid rgba(239, 68, 68, 0.3) !important;
+    color: var(--danger) !important;
     font-weight: 600;
-    transition: background-color 0.3s ease;
+    font-size: 0.8rem;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
   }
-
   .btn-delete:hover {
-    background-color: #e67e00;
-    border-color: #cc6f00;
-    color: white;
+    background: var(--danger) !important;
+    color: #fff !important;
   }
 
   .btn-review {
-    min-width: 120px;
+    min-width: 110px;
+    font-size: 0.8rem;
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
   }
 
   .btn-reviewed-yes {
-    background-color: #28a745 !important;
-    color: #fff;
+    background: var(--success) !important;
+    border-color: var(--success) !important;
+    color: #fff !important;
   }
-
   .btn-reviewed-no {
-    background-color: #dc3545 !important;
-    color: #fff;
+    background: var(--danger) !important;
+    border-color: var(--danger) !important;
+    color: #fff !important;
   }
 
   .btn-review[disabled],
   .btn-review[disabled]:hover {
     cursor: not-allowed !important;
-    color: #ffffff !important;
-    /* Makes text red */
+    opacity: 0.8;
+    color: #fff !important;
   }
 
-  /* Modal Customization */
-  .modal-content {
-    border-radius: 8px;
-  }
-
-  .modal-header {
-    background: #007bff;
-    color: #fff;
-    border-bottom: none;
-    border-radius: 8px 8px 0 0;
-  }
-
-  .modal-header .modal-title {
-    font-weight: 600;
-  }
-
-  .close {
-    color: #fff;
-    opacity: 1;
-  }
-
-  .close:hover {
-    color: #ffc107;
-  }
-
+  /* Toggle */
   .my-toggle-wrapper {
     text-align: center;
-    /* center horizontally */
     margin-bottom: 20px;
   }
 
-  /* Toggle container */
   .my-toggle {
     position: relative;
     display: inline-block;
-    width: 250px;
-    /* adjusted for proper text fit */
-    height: 50px;
-    background-color: #f0f2f5;
-    border: 2px solid #007bff;
-    border-radius: 8px;
+    width: 260px;
+    height: 46px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
     overflow: hidden;
     cursor: pointer;
   }
 
-  /* Label container for the two halves */
   .my-toggle-labels {
     position: absolute;
     display: flex;
     width: 100%;
     height: 100%;
     z-index: 2;
-    font-family: 'Poppins', sans-serif;
-    font-size: 1rem;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
     font-weight: 600;
-    color: #007bff;
+    color: var(--text-muted);
   }
 
   .my-toggle-labels span {
@@ -199,70 +176,72 @@
     color: #fff;
   }
 
-  /* The sliding indicator */
   .my-toggle-slider {
     position: absolute;
     top: 0;
     left: 0;
     width: 50%;
-    /* exactly half the container */
     height: 100%;
-    background-color: #007bff;
+    background: var(--accent-gradient);
     transition: transform 0.3s ease;
     z-index: 1;
+    border-radius: var(--radius-sm);
   }
 
   .reviewing-row {
     transition: opacity 0.4s ease, transform 0.4s ease;
   }
 
-  /* Probability Score Styling */
+  /* Probability Score Badge */
   .prob-badge {
     display: inline-block;
     padding: 4px 10px;
-    border-radius: 12px;
+    border-radius: 50px;
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     min-width: 55px;
     text-align: center;
+    font-family: var(--font-mono);
   }
   .prob-high {
-    background-color: #dc3545;
-    color: #fff;
+    background: var(--danger-dim);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.3);
   }
   .prob-medium {
-    background-color: #ffc107;
-    color: #212529;
+    background: var(--warning-dim);
+    color: var(--warning);
+    border: 1px solid rgba(245, 158, 11, 0.3);
   }
   .prob-low {
-    background-color: #28a745;
-    color: #fff;
+    background: var(--success-dim);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.3);
   }
 
-  /* AI Actions Button */
+  /* AI Actions */
   .btn-ai-actions {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: #fff;
+    background: var(--accent-gradient) !important;
+    color: var(--text-inverse) !important;
     border: none;
     font-weight: 600;
     padding: 8px 16px;
-    border-radius: 6px;
-    transition: all 0.3s ease;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
   }
   .btn-ai-actions:hover {
-    background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
-    color: #fff;
+    box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    color: var(--text-inverse) !important;
   }
   .ai-modal-icon {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     margin-right: 4px;
   }
 </style>
 
 <section class="malpractice-section">
-  <div class="container">
+  <div class="container" style="max-width:1400px;">
     <h2 class="malpractice-heading">Malpractice Log</h2>
 
     {% if not request.user.is_superuser %}
@@ -629,8 +608,8 @@
   aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="videoModalLabel">Video Analysis</h5>
+      <div class="modal-header" style="background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);">
+        <h5 class="modal-title" id="videoModalLabel"><i class="fas fa-play-circle" style="margin-right:6px;color:var(--accent-cyan);"></i>Video Analysis</h5>
         <button type="button" class="close" data-dismiss="modal" aria-label="Close">
           <span aria-hidden="true">&times;</span>
         </button>
@@ -1084,8 +1063,8 @@
   aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content">
-      <div class="modal-header bg-danger text-white">
-        <h5 class="modal-title" id="deleteAllModalLabel">
+      <div class="modal-header" style="background:var(--danger-dim);border-bottom:1px solid rgba(239,68,68,0.3);">
+        <h5 class="modal-title" id="deleteAllModalLabel" style="color:var(--danger);">
           <i class="fas fa-exclamation-triangle"></i> Confirm Delete All
         </h5>
         <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
@@ -1122,8 +1101,8 @@
   aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content">
-      <div class="modal-header bg-warning text-dark">
-        <h5 class="modal-title" id="deleteSelectedModalLabel">
+      <div class="modal-header" style="background:var(--warning-dim);border-bottom:1px solid rgba(245,158,11,0.3);">
+        <h5 class="modal-title" id="deleteSelectedModalLabel" style="color:var(--warning);">
           <i class="fas fa-exclamation-triangle"></i> Confirm Delete Selected
         </h5>
         <button type="button" class="close" data-dismiss="modal" aria-label="Close">
@@ -1159,8 +1138,8 @@
   aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content">
-      <div class="modal-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-bottom: none; border-radius: 8px 8px 0 0;">
-        <h5 class="modal-title" id="aiActionModalLabel">
+      <div class="modal-header" style="background:var(--accent-gradient);border-bottom:none;">
+        <h5 class="modal-title" id="aiActionModalLabel" style="color:#fff;">
           <i class="fas fa-robot"></i> <span id="aiActionTitle">AI Action</span>
         </h5>
         <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">

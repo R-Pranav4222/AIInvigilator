@@ -3,86 +3,133 @@
 {% block content %}
 
 <style>
-  .profile-container { margin-top: 100px; margin-bottom: 60px; }
-  .profile-card {
-    background: var(--bg-glass);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-xl);
-    padding: 40px;
-    transition: var(--transition-base);
+  /* Background & Font */
+  body {
+    background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+    font-family: 'Poppins', sans-serif;
   }
-  .profile-card:hover { transform: translateY(-3px); box-shadow: var(--glow-subtle); }
+
+  .profile-container {
+    margin-top: 60px;
+    margin-bottom: 60px;
+  }
+
+  .profile-card {
+    border-radius: 15px;
+    background-color: #ffffff;
+    padding: 40px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+  }
+
+  .profile-card:hover {
+    transform: translateY(-5px);
+  }
+
   .profile-heading {
-    font-size: 1.5rem;
-    font-weight: 800;
-    color: var(--text-primary);
-    border-bottom: 2px solid transparent;
-    border-image: var(--accent-gradient) 1;
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: #333;
+    border-bottom: 3px solid #007bff;
     padding-bottom: 15px;
     margin-bottom: 30px;
     text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 2px;
   }
+
   .profile-picture {
-    width: 150px; height: 150px;
+    width: 170px;
+    height: 170px;
     border-radius: 50%;
-    border: 3px solid var(--accent-cyan);
+    border: 5px solid #007bff;
     object-fit: cover;
     margin-bottom: 20px;
-    box-shadow: 0 0 30px var(--accent-cyan-dim);
-    transition: var(--transition-base);
+    transition: transform 0.3s ease;
   }
-  .profile-picture:hover { transform: scale(1.05); box-shadow: 0 0 40px rgba(0,212,255,0.2); }
+
+  .profile-picture:hover {
+    transform: scale(1.1);
+  }
+
   .badge-role {
-    font-size: 0.75rem;
-    padding: 4px 14px;
-    border-radius: 50px;
+    font-size: 0.85rem;
+    background-color: #ffc107;
+    color: #212529;
+    padding: 5px 12px;
+    border-radius: 20px;
     margin-top: 10px;
     display: inline-block;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-family: var(--font-mono);
   }
-  .badge-admin { background: var(--accent-gradient); color: var(--text-inverse); }
-  .badge-teacher { background: var(--accent-cyan-dim); color: var(--accent-cyan); border: 1px solid rgba(0,212,255,0.2); }
+
+  .profile-table {
+    width: 100%;
+  }
+
   .profile-table th {
-    width: 150px;
+    width: 160px;
     font-weight: 600;
-    color: var(--text-muted);
-    padding: 12px;
+    color: #555;
+    padding: 10px;
     text-align: left;
-    border-bottom: 1px solid var(--border-subtle);
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    border-bottom: 1px solid #dee2e6;
   }
+
   .profile-table td {
-    padding: 12px;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border-subtle);
-    font-weight: 500;
+    padding: 10px;
+    color: #333;
+    border-bottom: 1px solid #dee2e6;
   }
+
   .btn-action {
-    min-width: 150px;
+    min-width: 160px;
     font-weight: 600;
     margin: 10px 10px 0 0;
+    border-radius: 6px;
     padding: 10px 20px;
-    border-radius: var(--radius-sm);
-    transition: var(--transition-base);
-    font-size: 0.85rem;
+    transition: background-color 0.3s ease;
   }
+
+  .btn-edit {
+    background-color: #007bff;
+    color: #fff;
+    border: none;
+  }
+
+  .btn-edit:hover {
+    background-color: #0056b3;
+  }
+
+  .btn-password {
+    background-color: #6c757d;
+    color: #fff;
+    border: none;
+  }
+
+  .btn-password:hover {
+    background-color: #545b62;
+  }
+
   .admin-highlight {
-    border-left: 3px solid var(--accent-cyan);
-    background: var(--accent-cyan-dim);
-    padding: 12px 20px;
+    border-left: 6px solid #007bff;
+    background-color: #f0f8ff;
+    padding: 10px 20px;
     margin-bottom: 20px;
     font-weight: 600;
-    color: var(--accent-cyan);
-    border-radius: var(--radius-sm);
-    font-size: 0.9rem;
+    color: #004080;
+    border-radius: 6px;
+  }
+  .topbar,
+  .navbar {
+    font-family: 'Open Sans', sans-serif !important;
+    /* You can add other header-specific rules if needed, e.g.: */
+    background-color: inherit !important;
+    color: inherit !important;
+  }
+
+  /* Optionally, scope page-specific styles so they do not affect the header */
+  .main-content {
+    /* Page-specific styling (e.g., for login or registration content) */
+    font-family: 'Poppins', sans-serif;
+    background: linear-gradient(135deg, #edf2f7 0%, #cfd9df 100%);
   }
 </style>
 
@@ -105,12 +152,12 @@
             {% endif %}
             <div>
               {% if request.user.is_superuser %}
-                <span class="badge-role badge-admin">Admin</span>
+                <span class="badge-role">Admin</span>
               {% else %}
-                <span class="badge-role badge-teacher">Teacher</span>
+                <span class="badge-role">Teacher</span>
               {% endif %}
             </div>
-            <a href="{% url 'edit_profile' %}" class="btn btn-accent btn-action mt-3"><i class="fas fa-pen" style="margin-right:4px;"></i>Edit Profile</a>
+            <a href="{% url 'edit_profile' %}" class="btn btn-edit btn-action mt-3">Edit Profile</a>
           </div>
           <!-- User Info -->
           <div class="col-md-8">
@@ -145,7 +192,7 @@
                 {% endif %}
               </tbody>
             </table>
-            <a href="{% url 'change_password' %}" class="btn btn-accent-outline btn-action mt-3"><i class="fas fa-lock" style="margin-right:4px;"></i>Change Password</a>
+            <a href="{% url 'change_password' %}" class="btn btn-password btn-action mt-3">Change Password</a>
           </div>
         </div>
       </div>

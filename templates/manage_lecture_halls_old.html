@@ -1,68 +1,111 @@
-<!-- manage_lecture_halls.html -->
+<!-- manaage_lecture_halls.html -->
 
 {% include "header.html" %}
 {% block content %}
 
 <style>
-  .manage-section { min-height: 80vh; padding: 100px 0 40px; }
+  body {
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  }
+  .manage-section {
+    min-height: 70vh;
+    padding: 40px 0;
+  }
   .manage-heading {
     text-transform: uppercase;
-    font-weight: 800;
-    letter-spacing: 3px;
+    font-weight: 700;
+    letter-spacing: 2px;
     margin-bottom: 2rem;
-    color: var(--text-primary);
+    color: #333;
     text-align: center;
     position: relative;
-    font-size: 1.5rem;
   }
   .manage-heading::after {
     content: "";
     display: block;
-    width: 60px;
+    width: 80px;
     height: 3px;
-    background: var(--accent-gradient);
-    margin: 12px auto 0;
-    border-radius: 2px;
+    background-color: #007bff;
+    margin: 10px auto 0;
   }
+  /* Form Container */
   .add-form {
-    background: var(--bg-glass);
-    backdrop-filter: blur(10px);
-    border-radius: var(--radius-lg);
-    padding: 24px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
     margin-bottom: 30px;
-    border: 1px solid var(--border-subtle);
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+  }
+  .add-form label {
+    font-weight: 600;
+  }
+  .add-form .form-control {
+    border-radius: 5px;
   }
   .btn-add {
-    background: var(--accent-gradient) !important;
-    border: none !important;
-    color: var(--text-inverse) !important;
+    background-color: #007bff;
+    border: none;
+    color: #fff;
     padding: 10px 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    border-radius: var(--radius-sm);
-    transition: var(--transition-base);
+    font-size: 0.9rem;
+    border-radius: 5px;
+    transition: background-color 0.3s ease;
   }
-  .btn-add:hover { box-shadow: 0 4px 15px rgba(0,212,255,0.3); transform: translateY(-1px); }
+  .btn-add:hover {
+    background-color: #0056b3;
+  }
+  /* Table Container */
   .table-container {
-    background: var(--bg-glass);
-    backdrop-filter: blur(10px);
-    border-radius: var(--radius-lg);
-    padding: 0;
-    border: 1px solid var(--border-subtle);
-    overflow-x: auto;
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
   }
-  .btn-assign {
-    background: var(--success-dim) !important;
-    border: 1px solid rgba(16,185,129,0.3) !important;
-    color: var(--success) !important;
-    padding: 5px 12px;
-    font-size: 0.8rem;
+  .table {
+    margin-bottom: 0;
+  }
+  .table th {
+    background-color: #f7f9fc;
     font-weight: 600;
-    border-radius: var(--radius-sm);
-    transition: var(--transition-base);
   }
-  .btn-assign:hover { background: var(--success) !important; color: #fff !important; }
-  .teacher-select { border-radius: var(--radius-sm); padding: 5px; font-size: 0.85rem; }
+  .table td,
+  .table th {
+    vertical-align: middle;
+  }
+  .table thead th {
+    border-bottom: 2px solid #dee2e6;
+  }
+  /* Button Styling in Table */
+  .btn-assign {
+    background-color: #28a745;
+    border: none;
+    color: #fff;
+    padding: 5px 10px;
+    font-size: 0.8rem;
+    border-radius: 5px;
+    transition: background-color 0.3s ease;
+  }
+  .btn-assign:hover {
+    background-color: #218838;
+  }
+  /* Dropdown/Select Styling */
+  .teacher-select {
+    border-radius: 5px;
+    padding: 5px;
+    font-size: 0.9rem;
+  }
+  .filter-bar label {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+
+  .filter-bar .form-control {
+    border-radius: 6px;
+  }
+
+  .filter-bar .btn {
+    height: 38px;
+  }
 </style>
 
 <section class="manage-section">
