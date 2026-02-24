@@ -1,0 +1,489 @@
+{% include 'header.html' %}
+{% load static %}
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Upload Video for Analysis</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #f8f9fa 0%, #e0e0e0 100%);
+      font-family: 'Poppins', sans-serif;
+    }
+    .upload-container {
+      margin-top: 80px;
+      margin-bottom: 60px;
+    }
+    .upload-card {
+      background-color: #ffffff;
+      border-radius: 12px;
+      padding: 40px 30px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    }
+    .upload-heading {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #333;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .upload-heading::after {
+      content: "";
+      display: block;
+      width: 80px;
+      height: 4px;
+      background-color: #28a745;
+      margin: 12px auto 0;
+      border-radius: 10px;
+    }
+    .drop-zone {
+      border: 3px dashed #28a745;
+      border-radius: 12px;
+      padding: 60px 20px;
+      text-align: center;
+      background-color: #f8f9fa;
+      transition: all 0.3s ease;
+      cursor: pointer;
+      margin-bottom: 30px;
+    }
+    .drop-zone.dragover {
+      background-color: #e8f5e9;
+      border-color: #1e7e34;
+      transform: scale(1.02);
+    }
+    .drop-zone i {
+      font-size: 4rem;
+      color: #28a745;
+      margin-bottom: 20px;
+    }
+    .drop-zone p {
+      font-size: 1.2rem;
+      color: #666;
+      margin: 10px 0;
+    }
+    .file-input {
+      display: none;
+    }
+    .selected-file {
+      background-color: #e8f5e9;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .selected-file.show {
+      display: block;
+    }
+    .selected-file i {
+      color: #28a745;
+      font-size: 1.5rem;
+      margin-right: 10px;
+    }
+    .process-btn {
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding: 14px 40px;
+      border-radius: 8px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      width: 100%;
+      transition: background-color 0.3s ease;
+      display: none;
+    }
+    .process-btn.show {
+      display: block;
+    }
+    .process-btn:hover {
+      background-color: #218838;
+    }
+    .process-btn:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+    }
+    .progress-section {
+      margin-top: 30px;
+      display: none;
+    }
+    .progress-section.show {
+      display: block;
+    }
+    .video-stream {
+      width: 100%;
+      max-width: 100%;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: none;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+    .video-stream.show {
+      display: block;
+    }
+    .progress-bar-container {
+      background-color: #e9ecef;
+      border-radius: 10px;
+      height: 30px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .progress-bar {
+      background: linear-gradient(90deg, #28a745 0%, #20c997 100%);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 600;
+    }
+    .status-message {
+      text-align: center;
+      font-size: 1.1rem;
+      color: #333;
+      margin-bottom: 20px;
+    }
+    .detections-list {
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      padding: 20px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .detection-item {
+      background-color: white;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      border-left: 4px solid #dc3545;
+      animation: slideIn 0.3s ease;
+    }
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    .detection-item.mobile {
+      border-left-color: #ff8c00;
+    }
+    .detection-item.talking {
+      border-left-color: #00ff00;
+    }
+    .detection-item.peeking {
+      border-left-color: #ff00ff;
+    }
+    .detection-item.cheat_material {
+      border-left-color: #ff69b4;
+    }
+    .detection-item.suspicious {
+      border-left-color: #ffff00;
+    }
+    .lecture-hall-select {
+      margin-bottom: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 2px solid #28a745;
+      font-size: 1rem;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container upload-container">
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <div class="upload-card">
+        <h1 class="upload-heading">Upload Video for Malpractice Detection</h1>
+        
+        <!-- Info Box -->
+        <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #2196f3;">
+          <h6 style="margin: 0 0 10px 0; color: #1976d2;"><i class="fas fa-info-circle"></i> How It Works - Smart Recording</h6>
+          <ul style="margin: 0; padding-left: 20px; font-size: 0.95rem; color: #333;">
+            <li><strong>Pre-Roll Buffer:</strong> Captures 2 seconds BEFORE action detection for clearer context</li>
+            <li><strong>Quick Detection:</strong> Actions detected in just 0.3 seconds trigger recording</li>
+            <li><strong>Grace Period:</strong> Keeps recording for 3 seconds after action stops (catches repetitions)</li>
+            <li><strong>Minimum Clip Length:</strong> ~6 seconds (2s before + action + 3s grace) for clear evidence</li>
+            <li><strong>Real-Time Saves:</strong> All detections automatically saved when grace period ends</li>
+          </ul>
+        </div>
+        
+        <!-- Lecture Hall Selection -->
+        <div class="form-group">
+          <label for="lecture-hall-select" style="font-size: 1.1rem; font-weight: 600; margin-bottom: 10px;">Select Lecture Hall:</label>
+          <select class="lecture-hall-select" id="lecture-hall-select">
+            <option value="">-- Select Hall --</option>
+            <option value="1">Hall 1</option>
+            <option value="2">Hall 2</option>
+            <option value="3">Hall 3</option>
+          </select>
+        </div>
+
+        <!-- Drop Zone -->
+        <div class="drop-zone" id="dropZone">
+          <i class="fas fa-cloud-upload-alt"></i>
+          <p><strong>Drag and drop your video here</strong></p>
+          <p>or click to browse</p>
+          <p style="font-size: 0.9rem; color: #999; margin-top: 10px;">Supported formats: MP4, AVI, MKV, MOV</p>
+        </div>
+
+        <!-- Hidden file input -->
+        <input type="file" class="file-input" id="fileInput" accept="video/*">
+
+        <!-- Selected File Display -->
+        <div class="selected-file" id="selectedFile">
+          <i class="fas fa-video"></i>
+          <span id="fileName"></span>
+          <button type="button" class="btn btn-sm btn-danger float-right" id="removeFile">
+            <i class="fas fa-times"></i> Remove
+          </button>
+        </div>
+
+        <!-- Process Button -->
+        <button class="process-btn" id="processBtn">
+          <i class="fas fa-play-circle"></i> Start Processing
+        </button>
+
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+          <div class="status-message" id="statusMessage">
+            Processing video...
+          </div>
+          
+          <!-- Live Video Stream -->
+          <img class="video-stream" id="videoStream" src="" alt="Processing video...">
+          
+          <h4 style="margin-bottom: 15px; margin-top: 20px;">Detection Summary:</h4>
+          <div class="detections-list" id="detectionsList">
+            <p style="text-align: center; color: #999;">Detections will be uploaded to database in real-time...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Completion Modal -->
+<div class="modal fade" id="completionModal" tabindex="-1" role="dialog" aria-labelledby="completionModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="border-radius: 15px; border: 3px solid #28a745;">
+      <div class="modal-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; border-radius: 12px 12px 0 0;">
+        <h4 class="modal-title" id="completionModalLabel">
+          <i class="fas fa-check-circle"></i> Processing Complete!
+        </h4>
+      </div>
+      <div class="modal-body" style="padding: 30px; text-align: center;">
+        <div style="font-size: 4rem; color: #28a745; margin-bottom: 20px;">
+          <i class="fas fa-check-circle"></i>
+        </div>
+        <h5 id="completionMessage" style="margin-bottom: 20px; font-weight: 600;">Video Analysis Complete</h5>
+        <p id="completionDetails" style="font-size: 1.1rem; color: #666; margin-bottom: 25px;">
+          All detected malpractices have been uploaded to the database.
+        </p>
+        <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+          <h6 style="margin-bottom: 10px; color: #28a745;"><i class="fas fa-chart-bar"></i> Summary</h6>
+          <div id="detectionSummary" style="font-size: 1rem; color: #333;">
+            Processing results will appear here...
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top: none; padding: 0 30px 30px 30px; justify-content: space-between;">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal" style="border-radius: 8px; padding: 10px 20px;">
+          <i class="fas fa-times"></i> Close
+        </button>
+        <a href="{% url 'malpractice_log' %}" class="btn btn-success" style="border-radius: 8px; padding: 10px 20px;">
+          <i class="fas fa-list-alt"></i> View Malpractice Logs
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+$(document).ready(function() {
+  let selectedFile = null;
+  
+  // Get CSRF token from cookie
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+  const csrftoken = getCookie('csrftoken');
+  
+  // Click to browse
+  $('#dropZone').on('click', function() {
+    $('#fileInput').click();
+  });
+  
+  // File input change
+  $('#fileInput').on('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+      handleFile(file);
+    }
+  });
+  
+  // Drag and drop
+  $('#dropZone').on('dragover', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    $(this).addClass('dragover');
+  });
+  
+  $('#dropZone').on('dragleave', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    $(this).removeClass('dragover');
+  });
+  
+  $('#dropZone').on('drop', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    $(this).removeClass('dragover');
+    
+    const file = e.originalEvent.dataTransfer.files[0];
+    if (file && file.type.startsWith('video/')) {
+      handleFile(file);
+    } else {
+      alert('Please upload a valid video file');
+    }
+  });
+  
+  // Handle file selection
+  function handleFile(file) {
+    selectedFile = file;
+    $('#fileName').text(file.name + ' (' + formatFileSize(file.size) + ')');
+    $('#selectedFile').addClass('show');
+    $('#processBtn').addClass('show');
+    $('#dropZone').hide();
+  }
+  
+  // Remove file
+  $('#removeFile').on('click', function(e) {
+    e.stopPropagation();
+    selectedFile = null;
+    $('#fileInput').val('');
+    $('#selectedFile').removeClass('show');
+    $('#processBtn').removeClass('show');
+    $('#dropZone').show();
+    $('#progressSection').removeClass('show');
+  });
+  
+  // Process video
+  $('#processBtn').on('click', function() {
+    if (!selectedFile) {
+      alert('Please select a video file first');
+      return;
+    }
+    
+    const lectureHall = $('#lecture-hall-select').val();
+    if (!lectureHall) {
+      alert('Please select a lecture hall');
+      return;
+    }
+    
+    // Disable button
+    $(this).prop('disabled', true).text('Processing...');
+    
+    // Show progress section
+    $('#progressSection').addClass('show');
+    $('#statusMessage').text('Uploading video...');
+    $('#detectionsList').html('<p style="text-align: center; color: #999;">Uploading...</p>');
+    
+    // Create form data
+    const formData = new FormData();
+    formData.append('video', selectedFile);
+    formData.append('lecture_hall', lectureHall);
+    
+    // Upload with progress
+    $.ajax({
+      url: '{% url "process_video" %}',
+      type: 'POST',
+      data: formData,
+      processData: false,
+      contentType: false,
+      headers: {
+        'X-CSRFToken': csrftoken
+      },
+      success: function(response) {
+        console.log('Upload response:', response);
+        if (response.status === 'success' && response.session_id) {
+          $('#statusMessage').text('Video uploaded! Starting processing...');
+          
+          // Show video stream
+          const streamUrl = '/stream_video_processing/' + response.session_id + '/';
+          console.log('Stream URL:', streamUrl);
+          
+          $('#videoStream').attr('src', streamUrl).addClass('show');
+          console.log('Video stream element:', $('#videoStream')[0]);
+          
+          $('#detectionsList').html('<p style="text-align: center; color: #28a745;"><i class="fas fa-check-circle"></i> Processing started!</p><p style="text-align: center; color: #666; margin-top: 10px;">Watch the video above for live detections. Results are being saved to the database.</p>');
+          
+          // Monitor stream load and errors
+          $('#videoStream').on('load', function() {
+            console.log('Stream started loading');
+          });
+          
+          $('#videoStream').on('error', function(e) {
+            console.error('Stream error:', e);
+            console.log('Stream ended - showing completion modal');
+            
+            // Stream ended naturally (this is expected when processing completes)
+            setTimeout(function() {
+              $('#videoStream').removeClass('show');
+              $('#processBtn').prop('disabled', false).removeClass('show').text('Start Processing');
+              
+              // Show completion modal
+              $('#completionMessage').text('Video Processing Complete!');
+              $('#completionDetails').html('<i class="fas fa-info-circle"></i> All malpractice detections have been saved to the database.');
+              $('#detectionSummary').html('<p style="margin: 0;"><strong>Check the Malpractice Logs section to view detailed results.</strong></p>');
+              $('#completionModal').modal('show');
+              
+              // Reset form
+              selectedFile = null;
+              $('#fileInput').val('');
+              $('#selectedFile').removeClass('show');
+              $('#dropZone').show();
+            }, 1000);
+          });
+        } else {
+          $('#statusMessage').text('Error: ' + (response.message || 'Unknown error'));
+          $('#processBtn').prop('disabled', false).text('Start Processing');
+        }
+      },
+      error: function(xhr, status, error) {
+        $('#statusMessage').text('Error: ' + (xhr.responseJSON?.message || error));
+        $('#processBtn').prop('disabled', false).text('Start Processing');
+      }
+    });
+  });
+  
+  // Format file size
+  function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  }
+});
+</script>
+
+</body>
+</html>

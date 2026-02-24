@@ -29,6 +29,9 @@ urlpatterns = [
     path('trigger_camera_scripts/', views.trigger_camera_scripts, name='trigger_camera_scripts'),
     path('stop_camera_scripts/', views.stop_camera_scripts, name='stop_camera_scripts'),
     path('serve_video/', views.serve_video, name='serve_video'),
+    path('upload_video/', views.upload_video, name='upload_video'),
+    path('process_video/', views.process_video, name='process_video'),
+    path('stream_video_processing/<str:session_id>/', views.stream_video_processing, name='stream_video_processing'),
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 if settings.DEBUG:

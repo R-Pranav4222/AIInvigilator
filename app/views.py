@@ -3,7 +3,7 @@ from django.shortcuts import render
 from django.shortcuts import redirect
 from .models import *
 from threading import Event, Thread
-from django.http import JsonResponse, FileResponse, HttpResponse
+from django.http import JsonResponse, FileResponse, HttpResponse, StreamingHttpResponse
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.views.decorators.csrf import csrf_exempt
@@ -752,7 +752,7 @@ def trigger_camera_scripts(request):
         client_configs = [
             {
                 "name": "Top Corner - Host(Allen 2)",
-                "script_path": "C:\\Users\\noelm\\Documents\\PROJECTS\\AIInvigilator\\ML\\front.py",
+                "script_path": "e:\\witcher\\AIINVIGILATOR\\AIINVIGILATOR\\ML\\front.py",
                 "mode": "local"
             },
             # {
@@ -846,5 +846,107 @@ def stop_camera_scripts(request):
     return JsonResponse({"error": "Invalid request method"}, status=400)
 
 
+@login_required
+def upload_video(request):
+    """Render the video upload page"""
+    return render(request, 'upload_video.html')
+
+
+# Store video processing sessions
+VIDEO_SESSIONS = {}
+
+@login_required
+def process_video(request):
+    """Process uploaded video file with ML detection"""
+    if request.method == 'POST' and request.FILES.get('video'):
+        try:
+            video_file = request.FILES['video']
+            lecture_hall_id = request.POST.get('lecture_hall', '')
+            
+            # Save uploaded file to temporary location
+            upload_dir = os.path.join(settings.MEDIA_ROOT, 'uploaded_videos')
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # Generate unique filename and session ID
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            session_id = f"{timestamp}_{request.user.id}"
+            filename = f"{timestamp}_{video_file.name}"
+            filepath = os.path.join(upload_dir, filename)
+            
+            # Save uploaded file
+            with open(filepath, 'wb+') as destination:
+                for chunk in video_file.chunks():
+                    destination.write(chunk)
+            
+            # Store session info
+            VIDEO_SESSIONS[session_id] = {
+                'filepath': filepath,
+                'lecture_hall_id': lecture_hall_id,
+                'status': 'ready',
+                'user_id': request.user.id
+            }
+            
+            return JsonResponse({
+                'status': 'success',
+                'message': 'Video uploaded successfully',
+                'session_id': session_id
+            })
+            
+        except Exception as e:
+            return JsonResponse({
+                'status': 'error',
+                'message': str(e)
+            }, status=500)
+    
+    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+
+@login_required
+def stream_video_processing(request, session_id):
+    """Stream live video processing frames"""
+    import sys
+    import cv2
+    sys.path.append(os.path.join(settings.BASE_DIR, 'ML'))
+    from process_uploaded_video_stream import stream_process_video
+    
+    # Get session info
+    session = VIDEO_SESSIONS.get(session_id)
+    if not session:
+        return HttpResponse('Session not found', status=404)
+    
+    # Verify user owns this session
+    if session['user_id'] != request.user.id:
+        return HttpResponse('Unauthorized', status=403)
+    
+    def generate():
+        try:
+            filepath = session['filepath']
+            lecture_hall_id = session['lecture_hall_id']
+            
+            # Process video and yield frames
+            for frame_data in stream_process_video(filepath, lecture_hall_id):
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n')
+            
+            # Clean up after processing
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    print(f"✅ Cleaned up video: {filepath}")
+                except:
+                    pass
+            
+            # Remove session
+            VIDEO_SESSIONS.pop(session_id, None)
+            
+        except Exception as e:
+            print(f"❌ Stream error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    return StreamingHttpResponse(
+        generate(),
+        content_type='multipart/x-mixed-replace; boundary=frame'
+    )
 
 
