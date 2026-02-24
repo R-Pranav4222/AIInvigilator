@@ -204,13 +204,14 @@
         
         <!-- Info Box -->
         <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid #2196f3;">
-          <h6 style="margin: 0 0 10px 0; color: #1976d2;"><i class="fas fa-info-circle"></i> How It Works - Smart Recording</h6>
+          <h6 style="margin: 0 0 10px 0; color: #1976d2;"><i class="fas fa-info-circle"></i> Ultra-Fast Threaded Pipeline</h6>
           <ul style="margin: 0; padding-left: 20px; font-size: 0.95rem; color: #333;">
-            <li><strong>Pre-Roll Buffer:</strong> Captures 2 seconds BEFORE action detection for clearer context</li>
-            <li><strong>Quick Detection:</strong> Actions detected in just 0.3 seconds trigger recording</li>
-            <li><strong>Grace Period:</strong> Keeps recording for 3 seconds after action stops (catches repetitions)</li>
-            <li><strong>Minimum Clip Length:</strong> ~6 seconds (2s before + action + 3s grace) for clear evidence</li>
-            <li><strong>Real-Time Saves:</strong> All detections automatically saved when grace period ends</li>
+            <li><strong>🚀 ~20-25 seconds</strong> for a 15-second video (FP16 + threaded pipeline)</li>
+            <li><strong>📱 Mobile Detection:</strong> High-res 640px scan with 0.25 confidence (catches phones on desks)</li>
+            <li><strong>⚡ Pose Detection:</strong> Fast 416px scan for body actions (leaning, turning, etc.)</li>
+            <li><strong>Pre-Roll Buffer:</strong> Captures 1.5 seconds BEFORE action detection</li>
+            <li><strong>Grace Period:</strong> Keeps recording ~3 seconds after action stops</li>
+            <li><strong>Threaded:</strong> GPU processes at max speed, zero streaming overhead</li>
           </ul>
         </div>
         
@@ -308,6 +309,7 @@
 <script>
 $(document).ready(function() {
   let selectedFile = null;
+  let isProcessing = false;
   
   // Get CSRF token from cookie
   function getCookie(name) {
@@ -326,9 +328,26 @@ $(document).ready(function() {
   }
   const csrftoken = getCookie('csrftoken');
   
+  // Full reset function - restores page to initial state
+  function fullReset() {
+    isProcessing = false;
+    selectedFile = null;
+    $('#fileInput').val('');
+    $('#selectedFile').removeClass('show');
+    $('#processBtn').prop('disabled', false).removeClass('show').html('<i class="fas fa-play-circle"></i> Start Processing');
+    $('#dropZone').show();
+    $('#progressSection').removeClass('show');
+    // Unbind ALL event handlers on stream element and clear its src
+    $('#videoStream').off('load error').removeClass('show').removeAttr('src');
+    $('#statusMessage').text('Processing video...');
+    $('#detectionsList').html('<p style="text-align: center; color: #999;">Detections will be uploaded to database in real-time...</p>');
+  }
+  
   // Click to browse
   $('#dropZone').on('click', function() {
-    $('#fileInput').click();
+    if (!isProcessing) {
+      $('#fileInput').click();
+    }
   });
   
   // File input change
@@ -377,18 +396,13 @@ $(document).ready(function() {
   // Remove file
   $('#removeFile').on('click', function(e) {
     e.stopPropagation();
-    selectedFile = null;
-    $('#fileInput').val('');
-    $('#selectedFile').removeClass('show');
-    $('#processBtn').removeClass('show');
-    $('#dropZone').show();
-    $('#progressSection').removeClass('show');
+    fullReset();
   });
   
   // Process video
   $('#processBtn').on('click', function() {
-    if (!selectedFile) {
-      alert('Please select a video file first');
+    if (!selectedFile || isProcessing) {
+      if (!selectedFile) alert('Please select a video file first');
       return;
     }
     
@@ -397,6 +411,8 @@ $(document).ready(function() {
       alert('Please select a lecture hall');
       return;
     }
+    
+    isProcessing = true;
     
     // Disable button
     $(this).prop('disabled', true).text('Processing...');
@@ -426,50 +442,50 @@ $(document).ready(function() {
         if (response.status === 'success' && response.session_id) {
           $('#statusMessage').text('Video uploaded! Starting processing...');
           
-          // Show video stream
+          // Show video stream - UNBIND old handlers first, then bind new ones
           const streamUrl = '/stream_video_processing/' + response.session_id + '/';
           console.log('Stream URL:', streamUrl);
           
-          $('#videoStream').attr('src', streamUrl).addClass('show');
-          console.log('Video stream element:', $('#videoStream')[0]);
+          const $stream = $('#videoStream');
+          $stream.off('load error');  // Remove any stale handlers
           
-          $('#detectionsList').html('<p style="text-align: center; color: #28a745;"><i class="fas fa-check-circle"></i> Processing started!</p><p style="text-align: center; color: #666; margin-top: 10px;">Watch the video above for live detections. Results are being saved to the database.</p>');
-          
-          // Monitor stream load and errors
-          $('#videoStream').on('load', function() {
+          $stream.on('load', function() {
             console.log('Stream started loading');
           });
           
-          $('#videoStream').on('error', function(e) {
-            console.error('Stream error:', e);
+          $stream.on('error', function(e) {
             console.log('Stream ended - showing completion modal');
             
-            // Stream ended naturally (this is expected when processing completes)
+            // Guard against double-firing
+            if (!isProcessing) return;
+            
+            // Stream ended naturally (expected when processing completes)
             setTimeout(function() {
-              $('#videoStream').removeClass('show');
-              $('#processBtn').prop('disabled', false).removeClass('show').text('Start Processing');
-              
               // Show completion modal
               $('#completionMessage').text('Video Processing Complete!');
               $('#completionDetails').html('<i class="fas fa-info-circle"></i> All malpractice detections have been saved to the database.');
               $('#detectionSummary').html('<p style="margin: 0;"><strong>Check the Malpractice Logs section to view detailed results.</strong></p>');
               $('#completionModal').modal('show');
               
-              // Reset form
-              selectedFile = null;
-              $('#fileInput').val('');
-              $('#selectedFile').removeClass('show');
-              $('#dropZone').show();
+              // Full reset so user can upload another video immediately
+              fullReset();
             }, 1000);
           });
+          
+          // Set src AFTER binding handlers
+          $stream.attr('src', streamUrl).addClass('show');
+          
+          $('#detectionsList').html('<p style="text-align: center; color: #28a745;"><i class="fas fa-check-circle"></i> Processing started!</p><p style="text-align: center; color: #666; margin-top: 10px;">Watch the video above for live detections. Results are being saved to the database.</p>');
         } else {
           $('#statusMessage').text('Error: ' + (response.message || 'Unknown error'));
-          $('#processBtn').prop('disabled', false).text('Start Processing');
+          isProcessing = false;
+          $('#processBtn').prop('disabled', false).html('<i class="fas fa-play-circle"></i> Start Processing');
         }
       },
       error: function(xhr, status, error) {
         $('#statusMessage').text('Error: ' + (xhr.responseJSON?.message || error));
-        $('#processBtn').prop('disabled', false).text('Start Processing');
+        isProcessing = false;
+        $('#processBtn').prop('disabled', false).html('<i class="fas fa-play-circle"></i> Start Processing');
       }
     });
   });

@@ -87,6 +87,98 @@ COLOR_CHEAT = (180, 105, 255)      # Pink
 COLOR_SUSPICIOUS = (0, 255, 255)   # Yellow
 
 
+# ===== MODEL CACHE (load once, reuse across uploads) =====
+# Loading YOLO models + moving to GPU takes 10-15s.
+# By caching them as module-level globals, subsequent uploads start instantly.
+_cached_pose_model = None
+_cached_mobile_model = None
+_cached_half_precision = False
+
+
+def get_cached_models():
+    """Load models once and cache them. Returns (pose_model, mobile_model, use_half)."""
+    global _cached_pose_model, _cached_mobile_model, _cached_half_precision
+    
+    if _cached_pose_model is not None and _cached_mobile_model is not None:
+        print("\u26a1 Models already cached - instant start!")
+        return _cached_pose_model, _cached_mobile_model, _cached_half_precision
+    
+    print("\U0001f4e6 Loading models (first time - will be cached for next upload)...")
+    _cached_pose_model = YOLO(POSE_MODEL_PATH)
+    _cached_mobile_model = YOLO(MOBILE_MODEL_PATH)
+    
+    _cached_half_precision = False
+    if GPU_AVAILABLE:
+        _cached_pose_model.to(DEVICE)
+        _cached_mobile_model.to(DEVICE)
+        try:
+            if 'cuda' in str(DEVICE):
+                _cached_half_precision = True
+                print(f"\u2705 Models loaded on {DEVICE} with FP16 (half precision)")
+            else:
+                print(f"\u2705 Models loaded on {DEVICE}")
+        except:
+            print(f"\u2705 Models loaded on {DEVICE}")
+    else:
+        print("\u2705 Models loaded on CPU")
+    
+    # Warm up models with a dummy inference (CUDA lazy initialization)
+    print("\U0001f525 Warming up models (CUDA kernel compilation)...")
+    try:
+        import time as _t
+        _warmup_start = _t.time()
+        dummy = np.zeros((416, 416, 3), dtype=np.uint8)
+        _cached_pose_model(dummy, verbose=False, half=_cached_half_precision, imgsz=416)
+        _cached_mobile_model(dummy, verbose=False, half=_cached_half_precision, imgsz=640)
+        print(f"\u2705 Warmup done in {_t.time() - _warmup_start:.1f}s")
+    except Exception as e:
+        print(f"\u26a0\ufe0f Warmup failed (non-critical): {e}")
+    
+    return _cached_pose_model, _cached_mobile_model, _cached_half_precision
+
+
+def is_likely_phone(x1, y1, x2, y2, conf, frame_width, frame_height):
+    """Smart filter to distinguish mobile phones from calculators/remotes.
+    
+    Calculators are typically:
+    - Larger than phones (bigger bounding box area)
+    - More square or landscape aspect ratio
+    - Detected at lower confidence than real phones
+    
+    Real phones are typically:
+    - Smaller bounding boxes
+    - Portrait or elongated aspect ratio
+    - Higher confidence detections
+    
+    Returns: (is_phone: bool, reason: str)
+    """
+    box_w = x2 - x1
+    box_h = y2 - y1
+    area = box_w * box_h
+    frame_area = frame_width * frame_height
+    area_ratio = area / frame_area if frame_area > 0 else 0
+    
+    # Aspect ratio: width/height (phone portrait < 1.0, landscape > 1.0)
+    aspect = box_w / box_h if box_h > 0 else 1.0
+    
+    # === REJECT criteria (definitely NOT a phone) ===
+    
+    # Too large: object covers >5% of frame (calculator, book, laptop)
+    if area_ratio > 0.05 and conf < 0.45:
+        return False, f"too large ({area_ratio:.1%} of frame) at low conf {conf:.2f}"
+    
+    # Very square + large + low confidence = very likely calculator
+    if 0.7 < aspect < 1.4 and area_ratio > 0.02 and conf < 0.40:
+        return False, f"square shape ({aspect:.2f}) + large ({area_ratio:.1%}) + low conf {conf:.2f} = likely calculator"
+    
+    # Extremely large object at any confidence = not a phone
+    if area_ratio > 0.10:
+        return False, f"extremely large ({area_ratio:.1%} of frame)"
+    
+    # === ACCEPT: passes all filters ===
+    return True, f"phone-like (aspect:{aspect:.2f}, area:{area_ratio:.2%}, conf:{conf:.2f})"
+
+
 def save_video_to_database(action, video_filepath, lecture_hall_id):
     """Save video clip to database - exactly like front.py"""
     try:
@@ -189,27 +281,95 @@ def is_hand_raised(keypoints):
         return False
 
 
-def is_passing_paper(keypoints):
-    """Check if person is passing paper (extended arms)"""
-    try:
-        left_shoulder = keypoints[5]
-        right_shoulder = keypoints[6]
-        left_wrist = keypoints[9]
-        right_wrist = keypoints[10]
+def calculate_distance(p1, p2):
+    """Calculate Euclidean distance between two points."""
+    return np.linalg.norm(np.array(p1) - np.array(p2))
+
+
+def detect_passing_paper(wrists, keypoints_list):
+    """Detect paper passing by checking if wrists from DIFFERENT people are close together.
+    
+    This is a multi-person detection: requires at least 2 people.
+    Checks if any wrist from person A is close to any wrist from person B.
+    Filters out vertical hand raises to avoid false positives.
+    
+    Args:
+        wrists: list of [(left_wrist_xy, right_wrist_xy), ...] per person
+        keypoints_list: list of keypoints arrays per person (for hand raise filtering)
+    
+    Returns:
+        (passing_detected: bool, close_pairs: list)
+    """
+    if len(wrists) < 2:
+        return False, []
+    
+    threshold = 200          # Max distance between wrists to count as passing
+    min_self_wrist_dist = 100  # Skip person if their own wrists are too close (bad pose)
+    max_vertical_diff = 150  # Max vertical difference between wrists
+
+    close_pairs = []
+    passing_detected = False
+
+    for i in range(len(wrists)):
+        host = wrists[i]
+        # Skip if person's own wrists are too close (invalid pose)
+        if calculate_distance(host[0], host[1]) < min_self_wrist_dist:
+            continue
         
-        valid_points = all(kp[2] > 0.5 for kp in [left_shoulder, right_shoulder, left_wrist, right_wrist])
+        # Check if BOTH wrists are straight up (vertical hand raise) - skip if so
+        skip_vertical_raise = False
+        if i < len(keypoints_list):
+            kp = keypoints_list[i]
+            if len(kp) >= 11:
+                l_shoulder = kp[5]
+                r_shoulder = kp[6]
+                l_elbow = kp[7]
+                r_elbow = kp[8]
+                shoulder_y = min(l_shoulder[1], r_shoulder[1])
+                if (host[0][1] < shoulder_y - 80 and host[1][1] < shoulder_y - 80 and
+                    l_elbow[1] < shoulder_y - 40 and r_elbow[1] < shoulder_y - 40):
+                    skip_vertical_raise = True
         
-        if valid_points:
-            left_arm_length = np.linalg.norm(np.array(left_shoulder[:2]) - np.array(left_wrist[:2]))
-            right_arm_length = np.linalg.norm(np.array(right_shoulder[:2]) - np.array(right_wrist[:2]))
-            shoulder_width = np.linalg.norm(np.array(left_shoulder[:2]) - np.array(right_shoulder[:2]))
+        if skip_vertical_raise:
+            continue
+        
+        for j in range(i + 1, len(wrists)):
+            other = wrists[j]
+            if calculate_distance(other[0], other[1]) < min_self_wrist_dist:
+                continue
             
-            if shoulder_width > 0:
-                return (left_arm_length / shoulder_width > 1.5) or (right_arm_length / shoulder_width > 1.5)
-        
-        return False
-    except:
-        return False
+            # Skip if other person has clear vertical hand raise
+            skip_other_raise = False
+            if j < len(keypoints_list):
+                kp_other = keypoints_list[j]
+                if len(kp_other) >= 7:
+                    l_shoulder = kp_other[5]
+                    r_shoulder = kp_other[6]
+                    shoulder_y = min(l_shoulder[1], r_shoulder[1])
+                    if other[0][1] < shoulder_y - 80 and other[1][1] < shoulder_y - 80:
+                        skip_other_raise = True
+            
+            if skip_other_raise:
+                continue
+            
+            # Check all 4 wrist pairings between the two people
+            pairings = [
+                (host[0], other[0]),
+                (host[0], other[1]),
+                (host[1], other[0]),
+                (host[1], other[1])
+            ]
+            for w_a, w_b in pairings:
+                if w_a[0] == 0.0 or w_b[0] == 0.0:
+                    continue
+                if abs(w_a[1] - w_b[1]) > max_vertical_diff:
+                    continue
+                dist = calculate_distance(w_a, w_b)
+                if dist < threshold:
+                    close_pairs.append((i, j))
+                    passing_detected = True
+    
+    return passing_detected, close_pairs
 
 
 def is_looking_down(keypoints):
@@ -331,669 +491,871 @@ def detect_suspicious_behavior(keypoints_history):
 
 
 
+
 def stream_process_video(video_path, lecture_hall_id):
-    """Process video and yield frames for streaming"""
+    """Process video with ffmpeg pre-transcode + threaded pipeline for 25fps streaming.
+    
+    Architecture:
+    1. ffmpeg pre-transcodes high-res video to 720p (~3-5 seconds for 8K)
+    2. Background Thread: Reads 720p frames lightning fast, runs YOLO with FP16
+    3. Main Generator: Yields ALL annotated frames at 25fps from queue
+    
+    Key: 8K decode was the bottleneck (100ms/frame). 720p decode = 5ms/frame = 20x faster.
+    """
+    import threading
+    from queue import Queue, Empty
+    import time as time_module
+    import subprocess
+
     print(f"\n{'='*60}")
-    print(f"🎬 STREAMING VIDEO PROCESSOR STARTED")
+    print(f"🎬 ULTRA-FAST VIDEO PROCESSOR (ffmpeg + Threaded Pipeline)")
     print(f"📁 Video: {video_path}")
     print(f"🏛️ Lecture Hall ID: {lecture_hall_id}")
     print(f"🔧 Device: {DEVICE}")
+    print(f"🚀 Mode: ffmpeg transcode → GPU processing → 25fps streaming")
     print(f"{'='*60}\n")
-    
-    # Load models
-    print("📦 Loading models...")
-    pose_model = YOLO(POSE_MODEL_PATH)
-    mobile_model = YOLO(MOBILE_MODEL_PATH)
-    
-    if GPU_AVAILABLE:
-        pose_model.to(DEVICE)
-        mobile_model.to(DEVICE)
-        print(f"✅ Models loaded on {DEVICE}")
-    else:
-        print("✅ Models loaded on CPU")
-    
-    print(f"\n⚙️ Detection Settings:")
-    print(f"   Frame skip: Every 3rd frame (3x speed boost)")
-    print(f"   Detection threshold: {LEANING_THRESHOLD} frames (~0.3 seconds)")
-    print(f"   Grace period: {LEANING_GRACE_PERIOD} frames (~3 seconds after action stops)")
-    print(f"   Pre-roll buffer: 2 seconds BEFORE detection (for clearer proof clips)")
-    print(f"   Minimum clip length: ~6 seconds (2s before + action + 3s grace)")
-    print(f"   Actions monitored: Leaning, Mobile, Passing Paper, Turning Back, Hand Raise")
-    
-    # Open video
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
+
+    # Load models (cached after first call - instant on subsequent uploads)
+    pose_model, mobile_model, use_half_precision = get_cached_models()
+
+    # ===== STEP 1: Probe video and ffmpeg pre-transcode if needed =====
+    cap_probe = cv2.VideoCapture(video_path)
+    if not cap_probe.isOpened():
         print(f"❌ Error: Cannot open video {video_path}")
         return
-    
-    # Get video properties
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    fps = int(cap_probe.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap_probe.get(cv2.CAP_PROP_FRAME_COUNT))
+    original_width = int(cap_probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap_probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
     duration = total_frames / fps if fps > 0 else 0
-    
-    # SPEED OPTIMIZATION: Resize to 720p for processing if video is larger
-    # Handles ALL high-res videos (1080p, 2K, 4K, etc.) for faster processing
+    cap_probe.release()
+
+    print(f"📹 Original: {original_width}x{original_height}, {fps} FPS, {total_frames} frames, {duration:.1f}s")
+
     MAX_WIDTH = 1280
     MAX_HEIGHT = 720
-    
+    actual_video_path = video_path  # May change if we transcode
+    transcode_path = None
+
     if original_width > MAX_WIDTH or original_height > MAX_HEIGHT:
-        # Calculate scaling factor to fit within 720p while maintaining aspect ratio
+        # Calculate target size maintaining aspect ratio
         width_scale = MAX_WIDTH / original_width
         height_scale = MAX_HEIGHT / original_height
-        scale = min(width_scale, height_scale)  # Use smaller scale to fit within bounds
-        
-        frame_width = int(original_width * scale)
-        frame_height = int(original_height * scale)
-        
-        print(f"📹 Original: {original_width}x{original_height} - RESIZING to {frame_width}x{frame_height} for speed")
-        print(f"   Scale factor: {scale:.2f}x ({original_width*original_height/1000000:.1f}MP → {frame_width*frame_height/1000000:.1f}MP)")
-        needs_resize = True
+        scale = min(width_scale, height_scale)
+        target_w = int(original_width * scale)
+        target_h = int(original_height * scale)
+        # Ensure even dimensions (required by most codecs)
+        target_w = target_w if target_w % 2 == 0 else target_w - 1
+        target_h = target_h if target_h % 2 == 0 else target_h - 1
+
+        print(f"\n🔄 Pre-transcoding {original_width}x{original_height} → {target_w}x{target_h} with ffmpeg...")
+        transcode_start = time_module.time()
+
+        # Transcode to 720p with ffmpeg (MUCH faster than OpenCV decode + resize per frame)
+        ml_dir = os.path.dirname(__file__)
+        transcode_path = os.path.join(ml_dir, "temp_transcode_720p.mp4")
+
+        ffmpeg_cmd = [
+            'ffmpeg', '-y',             # Overwrite output
+            '-i', video_path,           # Input
+            '-vf', f'scale={target_w}:{target_h}',  # Resize
+            '-c:v', 'libx264',          # Fast H.264 encoding
+            '-preset', 'ultrafast',     # Fastest encoding preset
+            '-crf', '18',               # High quality
+            '-an',                      # No audio
+            '-loglevel', 'error',       # Quiet
+            transcode_path
+        ]
+
+        try:
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=60)
+            transcode_elapsed = time_module.time() - transcode_start
+
+            if result.returncode == 0 and os.path.exists(transcode_path):
+                actual_video_path = transcode_path
+                print(f"✅ Transcode complete in {transcode_elapsed:.1f}s → {transcode_path}")
+                frame_width = target_w
+                frame_height = target_h
+            else:
+                print(f"⚠️ ffmpeg failed, falling back to OpenCV resize")
+                if result.stderr:
+                    print(f"   Error: {result.stderr[:200]}")
+                frame_width = target_w
+                frame_height = target_h
+        except Exception as e:
+            print(f"⚠️ ffmpeg not available ({e}), falling back to OpenCV resize")
+            frame_width = target_w
+            frame_height = target_h
     else:
         frame_width = original_width
         frame_height = original_height
-        print(f"📹 Video: {frame_width}x{frame_height} (no resize needed)")
-        needs_resize = False
-    
-    print(f"📹 Video Info: {fps} FPS, {total_frames} frames, {duration:.1f}s")
-    print(f"\n▶️ Processing started...\n")
-    
-    # Initialize counters (ONLY 5 CV-BASED DETECTIONS)
-    frame_count = 0
-    detections_count = {
-        'leaning': 0, 'mobile': 0, 'turning': 0, 'passing': 0, 'hand_raise': 0
-    }
-    
-    # Frame counters for threshold detection
-    leaning_frames = 0
-    passing_frames = 0
-    mobile_frames = 0
-    turning_frames = 0
-    hand_raise_frames = 0
-    
-    # Max frame counters for debugging
-    max_leaning_frames = 0
-    max_passing_frames = 0
-    max_mobile_frames = 0
-    max_turning_frames = 0
-    max_hand_raise_frames = 0
-    
-    # Grace period counters (like front.py)
-    leaning_grace_frames = 0
-    passing_grace_frames = 0
-    mobile_grace_frames = 0
-    turning_grace_frames = 0
-    hand_raise_grace_frames = 0
-    
-    # Recording states (like front.py)
-    leaning_in_progress = False
-    leaning_recording = False
-    leaning_video = None
-    
-    passing_in_progress = False
-    passing_recording = False
-    passing_video = None
-    
-    mobile_in_progress = False
-    mobile_recording = False
-    mobile_video = None
-    
-    turning_in_progress = False
-    turning_recording = False
-    turning_video = None
-    
-    hand_raise_in_progress = False
-    hand_raise_recording = False
-    hand_raise_video = None
-    
-    # Temporary video files (in ML directory for reliability)
-    ml_dir = os.path.dirname(__file__)
-    temp_leaning = os.path.join(ml_dir, "temp_leaning.mp4")
-    temp_passing = os.path.join(ml_dir, "temp_passing.mp4")
-    temp_mobile = os.path.join(ml_dir, "temp_mobile.mp4")
-    temp_turning = os.path.join(ml_dir, "temp_turning.mp4")
-    temp_hand_raise = os.path.join(ml_dir, "temp_hand_raise.mp4")
-    
-    # CIRCULAR BUFFER: Store last 2 seconds of frames for pre-roll (2 seconds = 2 * fps frames)
-    # This allows us to record 2 seconds BEFORE action is detected
-    buffer_size = int(2 * fps)  # 2 seconds worth of frames
-    frame_buffer = deque(maxlen=buffer_size)  # Automatically removes oldest when full
-    print(f"\n💾 Frame Buffer: Storing last {buffer_size} frames (2 seconds) for pre-roll")
-    
-    # Frame skip for faster processing
-    frame_skip = 3
-    frames_processed = 0
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        frame_count += 1
-        
-        # SPEED OPTIMIZATION: Resize frame if needed (any video > 720p)
-        if needs_resize:
-            frame = cv2.resize(frame, (frame_width, frame_height))
-        
-        # Add frame to circular buffer (stores ALL frames for 2-second pre-roll)
-        frame_buffer.append(frame.copy())
-        
-        # IMPORTANT: Write ALL frames to ongoing recordings for smooth playback (even skipped frames)
-        # This ensures recorded videos are smooth, not choppy
-        if leaning_in_progress and leaning_recording and leaning_video:
-            leaning_video.write(frame)
-        if mobile_in_progress and mobile_recording and mobile_video:
-            mobile_video.write(frame)
-        if passing_in_progress and passing_recording and passing_video:
-            passing_video.write(frame)
-        if turning_in_progress and turning_recording and turning_video:
-            turning_video.write(frame)
-        if hand_raise_in_progress and hand_raise_recording and hand_raise_video:
-            hand_raise_video.write(frame)
-        
-        # SPEED OPTIMIZATION: Skip frames for faster DETECTION and STREAMING
-        # (but we still wrote them to recordings above for smooth playback)
-        if frame_count % frame_skip != 0:
-            continue
-        
-        frames_processed += 1
-        
-        # Create display frame (overlay detections)
-        display_frame = frame.copy()
-        
-        # Initialize detection flags (ONLY 5 CV-BASED DETECTIONS)
-        leaning_this_frame = False
-        passing_this_frame = False
-        mobile_this_frame = False
-        turning_this_frame = False
-        hand_raise_this_frame = False
-        
-        # Run pose detection on full frame for accurate keypoint positions
-        pose_results = pose_model(frame, verbose=False)
-        
-        for result in pose_results:
-            if result.keypoints is not None and len(result.keypoints) > 0:
-                for keypoints in result.keypoints.data:
-                    keypoints_np = keypoints.cpu().numpy()
-                    
-                    # Draw skeleton on display frame
-                    for i, (x, y, conf) in enumerate(keypoints_np):
-                        if conf > 0.5:  # Only draw visible keypoints
-                            cv2.circle(display_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
-                    
-                    # Draw skeleton connections (COCO format)
-                    skeleton_connections = [
-                        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Arms
-                        (5, 11), (6, 12), (11, 12),  # Torso
-                        (11, 13), (13, 15), (12, 14), (14, 16),  # Legs
-                        (0, 1), (0, 2), (1, 3), (2, 4)  # Head
-                    ]
-                    for start_idx, end_idx in skeleton_connections:
-                        if start_idx < len(keypoints_np) and end_idx < len(keypoints_np):
-                            start_point = keypoints_np[start_idx]
-                            end_point = keypoints_np[end_idx]
-                            if start_point[2] > 0.5 and end_point[2] > 0.5:
-                                cv2.line(display_frame, 
-                                        (int(start_point[0]), int(start_point[1])),
-                                        (int(end_point[0]), int(end_point[1])),
-                                        (0, 255, 0), 2)
-                    
-                    # ONLY 5 CV-BASED DETECTIONS (using full frame dimensions)
-                    if is_leaning(keypoints_np, frame_width, frame_height):
-                        leaning_this_frame = True
-                    if is_turning_back(keypoints_np):
-                        turning_this_frame = True
-                    if is_hand_raised(keypoints_np):
-                        hand_raise_this_frame = True
-                    if is_passing_paper(keypoints_np):
-                        passing_this_frame = True
-        
-        # Run mobile detection on full frame
-        mobile_results = mobile_model(frame, verbose=False)
-        for result in mobile_results:
-            if result.boxes is not None:
-                for box in result.boxes:
-                    class_id = int(box.cls[0])
-                    if class_id == MOBILE_CLASS_ID and box.conf[0] > 0.5:
-                        mobile_this_frame = True
-                        # Draw bounding box (coordinates are already in full frame scale)
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), COLOR_MOBILE, 3)
-                        cv2.putText(display_frame, f"Mobile {box.conf[0]:.2f}", 
-                                   (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_MOBILE, 2)
-        
-        # Update frame counters (ONLY 5 CV-BASED DETECTIONS)
-        leaning_frames = leaning_frames + 1 if leaning_this_frame else 0
-        passing_frames = passing_frames + 1 if passing_this_frame else 0
-        mobile_frames = mobile_frames + 1 if mobile_this_frame else 0
-        turning_frames = turning_frames + 1 if turning_this_frame else 0
-        hand_raise_frames = hand_raise_frames + 1 if hand_raise_this_frame else 0
-        
-        # Track max frames for debugging
-        max_leaning_frames = max(max_leaning_frames, leaning_frames)
-        max_passing_frames = max(max_passing_frames, passing_frames)
-        max_mobile_frames = max(max_mobile_frames, mobile_frames)
-        max_turning_frames = max(max_turning_frames, turning_frames)
-        max_hand_raise_frames = max(max_hand_raise_frames, hand_raise_frames)
-        
-        # Add detection overlays to display frame (ONLY 5 DETECTIONS)
-        y_offset = 50
-        if leaning_frames > 0:
-            cv2.putText(display_frame, f"LEANING! ({leaning_frames}/{LEANING_THRESHOLD})", 
-                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_LEANING, 3)
-            y_offset += 40
-        if mobile_frames > 0:
-            cv2.putText(display_frame, f"MOBILE! ({mobile_frames}/{MOBILE_THRESHOLD})", 
-                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_MOBILE, 3)
-            y_offset += 40
-        if turning_frames > 0:
-            cv2.putText(display_frame, f"TURNING BACK! ({turning_frames}/{TURNING_THRESHOLD})", 
-                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_TURNING, 3)
-            y_offset += 40
-        if passing_frames > 0:
-            cv2.putText(display_frame, f"PASSING PAPER! ({passing_frames}/{PASSING_THRESHOLD})", 
-                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_PASSING, 3)
-            y_offset += 40
-        if hand_raise_frames > 0:
-            cv2.putText(display_frame, f"HAND RAISED! ({hand_raise_frames}/{HAND_RAISE_THRESHOLD})", 
-                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_HAND_RAISE, 3)
-            y_offset += 40
-        
-        # Add progress bar at bottom (clamp to 100% when near end)
-        progress = (frame_count / total_frames) if total_frames > 0 else 0
-        # If we're within 5 frames of the end, show 100%
-        if total_frames - frame_count <= 5:
-            progress = 1.0
-        bar_width = int(progress * frame_width)
-        cv2.rectangle(display_frame, (0, frame_height - 20), (bar_width, frame_height), (0, 255, 0), -1)
-        cv2.putText(display_frame, f"Processing: {progress*100:.1f}% | Frame: {frames_processed}", 
-                   (10, frame_height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        # VIDEO RECORDING & DATABASE SAVES - Exactly like front.py with grace period!
-        # LEANING
-        if leaning_frames >= LEANING_THRESHOLD:
-            leaning_grace_frames = 0  # Reset grace period when action detected
-            if not leaning_in_progress:
-                leaning_in_progress = True
-                leaning_recording = True
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                leaning_video = cv2.VideoWriter(temp_leaning, fourcc, fps, (frame_width, frame_height))
-                
-                # Write buffered frames (2 seconds BEFORE detection) for clearer proof
-                print(f"\n▶️ LEANING detected! Writing {len(frame_buffer)} buffered frames (2s pre-roll)...")
-                for buffered_frame in frame_buffer:
-                    leaning_video.write(buffered_frame)
-                print(f"   ✅ Buffer written, continuing live recording...")
-        else:
-            if leaning_in_progress:
-                leaning_grace_frames += 1
-                if leaning_grace_frames < LEANING_GRACE_PERIOD:
-                    # Keep recording during grace period
-                    pass
-                else:
-                    # Grace period expired, save and stop
-                    leaning_in_progress = False
-                    if leaning_recording and leaning_video:
-                        leaning_video.release()
-                        leaning_video = None
-                        # Save to database IMMEDIATELY
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        final_filename = f"leaning_{timestamp}.mp4"
-                        final_path = os.path.join(MEDIA_DIR, final_filename)
-                        if os.path.exists(temp_leaning):
-                            print(f"\n  💾 Grace period ended ({leaning_grace_frames} frames)")
-                            print(f"  📁 Copying {os.path.basename(temp_leaning)} -> {final_filename}")
-                            shutil.copy(temp_leaning, final_path)
-                            print(f"  📊 Saving to database...")
-                            save_video_to_database(LEANING_ACTION, final_path, lecture_hall_id)
-                            detections_count['leaning'] += 1
-                        else:
-                            print(f"  ⚠️ Warning: {temp_leaning} not found!")
-                        leaning_recording = False
-                    leaning_grace_frames = 0
-        
-        # MOBILE
-        if mobile_frames >= MOBILE_THRESHOLD:
-            mobile_grace_frames = 0
-            if not mobile_in_progress:
-                mobile_in_progress = True
-                mobile_recording = True
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                mobile_video = cv2.VideoWriter(temp_mobile, fourcc, fps, (frame_width, frame_height))
-                
-                # Write buffered frames (2 seconds BEFORE detection)
-                print(f"\n▶️ MOBILE detected! Writing {len(frame_buffer)} buffered frames (2s pre-roll)...")
-                for buffered_frame in frame_buffer:
-                    mobile_video.write(buffered_frame)
-                print(f"   ✅ Buffer written, continuing live recording...")
-        else:
-            if mobile_in_progress:
-                mobile_grace_frames += 1
-                if mobile_grace_frames < MOBILE_GRACE_PERIOD:
-                    pass
-                else:
-                    mobile_in_progress = False
-                    if mobile_recording and mobile_video:
-                        mobile_video.release()
-                        mobile_video = None
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        final_filename = f"mobile_{timestamp}.mp4"
-                        final_path = os.path.join(MEDIA_DIR, final_filename)
-                        if os.path.exists(temp_mobile):
-                            print(f"\n  💾 Grace period ended ({mobile_grace_frames} frames)")
-                            print(f"  📁 Copying {os.path.basename(temp_mobile)} -> {final_filename}")
-                            shutil.copy(temp_mobile, final_path)
-                            print(f"  📊 Saving to database...")
-                            save_video_to_database(ACTION_MOBILE, final_path, lecture_hall_id)
-                            detections_count['mobile'] += 1
-                        else:
-                            print(f"  ⚠️ Warning: {temp_mobile} not found!")
-                        mobile_recording = False
-                    mobile_grace_frames = 0
-        
-        # PASSING PAPER
-        if passing_frames >= PASSING_THRESHOLD:
-            passing_grace_frames = 0
-            if not passing_in_progress:
-                passing_in_progress = True
-                passing_recording = True
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                passing_video = cv2.VideoWriter(temp_passing, fourcc, fps, (frame_width, frame_height))
-                
-                # Write buffered frames (2 seconds BEFORE detection)
-                print(f"\n▶️ PASSING PAPER detected! Writing {len(frame_buffer)} buffered frames (2s pre-roll)...")
-                for buffered_frame in frame_buffer:
-                    passing_video.write(buffered_frame)
-                print(f"   ✅ Buffer written, continuing live recording...")
-        else:
-            if passing_in_progress:
-                passing_grace_frames += 1
-                if passing_grace_frames < PASSING_GRACE_PERIOD:
-                    pass
-                else:
-                    passing_in_progress = False
-                    if passing_recording and passing_video:
-                        passing_video.release()
-                        passing_video = None
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        final_filename = f"passing_{timestamp}.mp4"
-                        final_path = os.path.join(MEDIA_DIR, final_filename)
-                        if os.path.exists(temp_passing):
-                            print(f"\n  💾 Grace period ended ({passing_grace_frames} frames)")
-                            print(f"  📁 Copying {os.path.basename(temp_passing)} -> {final_filename}")
-                            shutil.copy(temp_passing, final_path)
-                            print(f"  📊 Saving to database...")
-                            save_video_to_database(PASSING_ACTION, final_path, lecture_hall_id)
-                            detections_count['passing'] += 1
-                        else:
-                            print(f"  ⚠️ Warning: {temp_passing} not found!")
-                        passing_recording = False
-                    passing_grace_frames = 0
-        
-        # TURNING BACK
-        if turning_frames >= TURNING_THRESHOLD:
-            turning_grace_frames = 0
-            if not turning_in_progress:
-                turning_in_progress = True
-                turning_recording = True
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                turning_video = cv2.VideoWriter(temp_turning, fourcc, fps, (frame_width, frame_height))
-                
-                # Write buffered frames (2 seconds BEFORE detection)
-                print(f"\n▶️ TURNING BACK detected! Writing {len(frame_buffer)} buffered frames (2s pre-roll)...")
-                for buffered_frame in frame_buffer:
-                    turning_video.write(buffered_frame)
-                print(f"   ✅ Buffer written, continuing live recording...")
-        else:
-            if turning_in_progress:
-                turning_grace_frames += 1
-                if turning_grace_frames < TURNING_GRACE_PERIOD:
-                    pass
-                else:
-                    turning_in_progress = False
-                    if turning_recording and turning_video:
-                        turning_video.release()
-                        turning_video = None
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        final_filename = f"turning_{timestamp}.mp4"
-                        final_path = os.path.join(MEDIA_DIR, final_filename)
-                        if os.path.exists(temp_turning):
-                            print(f"\n  💾 Grace period ended ({turning_grace_frames} frames)")
-                            print(f"  📁 Copying {os.path.basename(temp_turning)} -> {final_filename}")
-                            shutil.copy(temp_turning, final_path)
-                            print(f"  📊 Saving to database...")
-                            save_video_to_database(TURNING_ACTION, final_path, lecture_hall_id)
-                            detections_count['turning'] += 1
-                        else:
-                            print(f"  ⚠️ Warning: {temp_turning} not found!")
-                        turning_recording = False
-                    turning_grace_frames = 0
-        
-        # HAND RAISE
-        if hand_raise_frames >= HAND_RAISE_THRESHOLD:
-            hand_raise_grace_frames = 0
-            if not hand_raise_in_progress:
-                hand_raise_in_progress = True
-                hand_raise_recording = True
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                hand_raise_video = cv2.VideoWriter(temp_hand_raise, fourcc, fps, (frame_width, frame_height))
-                
-                # Write buffered frames (2 seconds BEFORE detection)
-                print(f"\n▶️ HAND RAISED detected! Writing {len(frame_buffer)} buffered frames (2s pre-roll)...")
-                for buffered_frame in frame_buffer:
-                    hand_raise_video.write(buffered_frame)
-                print(f"   ✅ Buffer written, continuing live recording...")
-        else:
-            if hand_raise_in_progress:
-                hand_raise_grace_frames += 1
-                if hand_raise_grace_frames < HAND_RAISE_GRACE_PERIOD:
-                    pass
-                else:
-                    hand_raise_in_progress = False
-                    if hand_raise_recording and hand_raise_video:
-                        hand_raise_video.release()
-                        hand_raise_video = None
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        final_filename = f"hand_raise_{timestamp}.mp4"
-                        final_path = os.path.join(MEDIA_DIR, final_filename)
-                        if os.path.exists(temp_hand_raise):
-                            print(f"\n  💾 Grace period ended ({hand_raise_grace_frames} frames)")
-                            print(f"  📁 Copying {os.path.basename(temp_hand_raise)} -> {final_filename}")
-                            shutil.copy(temp_hand_raise, final_path)
-                            print(f"  📊 Saving to database...")
-                            save_video_to_database(HAND_RAISE_ACTION, final_path, lecture_hall_id)
-                            detections_count['hand_raise'] += 1
-                        else:
-                            print(f"  ⚠️ Warning: {temp_hand_raise} not found!")
-                        hand_raise_recording = False
-                    hand_raise_grace_frames = 0
-        
-        # Encode frame as JPEG and yield (lower quality for faster streaming)
-        ret, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-        if ret:
-            yield buffer.tobytes()
-    
-    print(f"\n{'='*60}")
-    print(f"VIDEO ENDED - Saving any ongoing recordings...")
-    print(f"{'='*60}")
-    
-    # CRITICAL: Save any ongoing recordings when video ends!
-    # LEANING
-    if leaning_in_progress and leaning_recording and leaning_video:
-        print(f"\n💾 Saving incomplete LEANING recording...")
-        leaning_video.release()
-        leaning_video = None
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_filename = f"leaning_{timestamp}.mp4"
-        final_path = os.path.join(MEDIA_DIR, final_filename)
-        if os.path.exists(temp_leaning):
-            shutil.copy(temp_leaning, final_path)
-            save_video_to_database(LEANING_ACTION, final_path, lecture_hall_id)
-            detections_count['leaning'] += 1
-    
-    # MOBILE
-    if mobile_in_progress and mobile_recording and mobile_video:
-        print(f"\n💾 Saving incomplete MOBILE recording...")
-        mobile_video.release()
-        mobile_video = None
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_filename = f"mobile_{timestamp}.mp4"
-        final_path = os.path.join(MEDIA_DIR, final_filename)
-        if os.path.exists(temp_mobile):
-            shutil.copy(temp_mobile, final_path)
-            save_video_to_database(ACTION_MOBILE, final_path, lecture_hall_id)
-            detections_count['mobile'] += 1
-    
-    # PASSING PAPER
-    if passing_in_progress and passing_recording and passing_video:
-        print(f"\n💾 Saving incomplete PASSING PAPER recording...")
-        passing_video.release()
-        passing_video = None
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_filename = f"passing_{timestamp}.mp4"
-        final_path = os.path.join(MEDIA_DIR, final_filename)
-        if os.path.exists(temp_passing):
-            shutil.copy(temp_passing, final_path)
-            save_video_to_database(PASSING_ACTION, final_path, lecture_hall_id)
-            detections_count['passing'] += 1
-    
-    # TURNING BACK
-    if turning_in_progress and turning_recording and turning_video:
-        print(f"\n💾 Saving incomplete TURNING BACK recording...")
-        turning_video.release()
-        turning_video = None
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_filename = f"turning_{timestamp}.mp4"
-        final_path = os.path.join(MEDIA_DIR, final_filename)
-        if os.path.exists(temp_turning):
-            shutil.copy(temp_turning, final_path)
-            save_video_to_database(TURNING_ACTION, final_path, lecture_hall_id)
-            detections_count['turning'] += 1
-    
-    # HAND RAISE
-    if hand_raise_in_progress and hand_raise_recording and hand_raise_video:
-        print(f"\n💾 Saving incomplete HAND RAISE recording...")
-        hand_raise_video.release()
-        hand_raise_video = None
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        final_filename = f"hand_raise_{timestamp}.mp4"
-        final_path = os.path.join(MEDIA_DIR, final_filename)
-        if os.path.exists(temp_hand_raise):
-            shutil.copy(temp_hand_raise, final_path)
-            save_video_to_database(HAND_RAISE_ACTION, final_path, lecture_hall_id)
-            detections_count['hand_raise'] += 1
-    
-    # Clean up - release any remaining video writers
-    cap.release()
-    if leaning_video:
-        leaning_video.release()
-    if mobile_video:
-        mobile_video.release()
-    if passing_video:
-        passing_video.release()
-    if turning_video:
-        turning_video.release()
-    if hand_raise_video:
-        hand_raise_video.release()
-    
-    # Cleanup temporary video files
-    for temp_file in [temp_leaning, temp_mobile, temp_passing, temp_turning, temp_hand_raise]:
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-                print(f"🗑️ Deleted temp file: {temp_file}")
-            except:
-                pass
-    
-    print(f"\n{'='*60}")
-    print(f"✅ VIDEO PROCESSING COMPLETE")
-    
-    # Debug: Show max consecutive frames detected for each action
-    print(f"\n🔍 Detection Analysis (max consecutive frames):")
-    print(f"   Leaning: {max_leaning_frames} frames (threshold: {LEANING_THRESHOLD})")
-    print(f"   Passing: {max_passing_frames} frames (threshold: {PASSING_THRESHOLD})")
-    print(f"   Mobile: {max_mobile_frames} frames (threshold: {MOBILE_THRESHOLD})")
-    print(f"   Turning: {max_turning_frames} frames (threshold: {TURNING_THRESHOLD})")
-    print(f"   Hand Raise: {max_hand_raise_frames} frames (threshold: {HAND_RAISE_THRESHOLD})")
-    
-    print(f"\n📊 Total Detections Saved to Database:")
-    detections_found = False
-    total_detections = 0
-    for action, count in detections_count.items():
-        if count > 0:
-            print(f"   ✅ {action}: {count}")
-            detections_found = True
-            total_detections += count
-    
-    if not detections_found:
-        print(f"   ⚠️ No malpractice detections saved to database")
-        print(f"   💡 Possible reasons:")
-        print(f"      - Detections didn't reach threshold ({LEANING_THRESHOLD} frames = ~0.3 seconds)")
-        print(f"      - No suspicious behavior detected in the video")
-        print(f"      - Check console output above for detection attempts")
-    
-    print(f"{'='*60}\n")
-    
-    # Create completion frame to show in the video stream
-    completion_frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
-    completion_frame[:] = (40, 40, 40)  # Dark gray background
-    
-    # Main title (use SIMPLEX with thick stroke to simulate bold)
-    title = "PROCESSING COMPLETE"
-    title_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 4)[0]
-    title_x = (frame_width - title_size[0]) // 2
-    cv2.putText(completion_frame, title, (title_x, 100), 
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 4)
-    
-    # Draw checkmark icon
-    center_x = frame_width // 2
-    cv2.circle(completion_frame, (center_x, 200), 60, (0, 255, 0), 5)
-    cv2.putText(completion_frame, "✓", (center_x - 30, 220), 
-                cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 6)
-    
-    # Detection summary
-    y_pos = 320
-    if detections_found:
-        summary_title = f"📊 {total_detections} Malpractice(s) Detected & Saved"
-        summary_size = cv2.getTextSize(summary_title, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
-        summary_x = (frame_width - summary_size[0]) // 2
-        cv2.putText(completion_frame, summary_title, (summary_x, y_pos), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-        
-        y_pos += 60
-        # List each detection type
-        for action, count in detections_count.items():
-            if count > 0:
-                detail = f"{action.replace('_', ' ').title()}: {count}"
-                detail_size = cv2.getTextSize(detail, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                detail_x = (frame_width - detail_size[0]) // 2
-                cv2.putText(completion_frame, detail, (detail_x, y_pos), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
-                y_pos += 40
+        print(f"📹 Video is already ≤720p, no transcode needed")
+
+    # Open the (possibly transcoded) video
+    cap = cv2.VideoCapture(actual_video_path)
+    if not cap.isOpened():
+        print(f"❌ Error: Cannot open processed video")
+        return
+
+    # Re-read properties from actual file (may differ slightly after transcode)
+    actual_fps = int(cap.get(cv2.CAP_PROP_FPS)) or fps
+    actual_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or total_frames
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    needs_resize = (actual_w != frame_width or actual_h != frame_height)
+
+    if needs_resize:
+        print(f"📹 Will resize {actual_w}x{actual_h} → {frame_width}x{frame_height} per frame (fallback)")
     else:
-        no_detection = "No malpractice detected"
-        no_detection_size = cv2.getTextSize(no_detection, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
-        no_detection_x = (frame_width - no_detection_size[0]) // 2
-        cv2.putText(completion_frame, no_detection, (no_detection_x, y_pos), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
-        y_pos += 60
-    
-    # Instructions
-    y_pos += 40
-    instruction = "View details in Malpractice Logs section"
-    instruction_size = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-    instruction_x = (frame_width - instruction_size[0]) // 2
-    cv2.putText(completion_frame, instruction, (instruction_x, y_pos), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 200, 255), 2)
-    
-    # Green progress bar (100% complete)
-    cv2.rectangle(completion_frame, (0, frame_height - 20), (frame_width, frame_height), (0, 255, 0), -1)
-    cv2.putText(completion_frame, "Processing: 100.0% | Complete", 
-               (10, frame_height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
-    # Yield completion frame for 3 seconds (simulate ~3 second display)
-    for _ in range(15):  # Show completion screen for ~1.5 seconds
-        ret, buffer = cv2.imencode('.jpg', completion_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if ret:
-            yield buffer.tobytes()
+        print(f"📹 Processing at {actual_w}x{actual_h} (no per-frame resize needed)")
+
+    # ===== THREADED PIPELINE SETTINGS =====
+    FRAME_SKIP = 3        # Every 3rd frame gets YOLO
+    POSE_IMGSZ = 416      # Fast pose inference
+    MOBILE_IMGSZ = 640    # Higher res for small phone objects
+    JPEG_QUALITY = 55
+    STREAM_FPS = 25       # Target streaming framerate
+    GRACE_PERIOD = 30     # ~3 seconds of grace
+    MOBILE_CONF = 0.25    # Catch phones on desks
+
+    print(f"\n⚙️ Ultra-Fast Pipeline Settings:")
+    print(f"   Frame skip: Every {FRAME_SKIP}rd frame")
+    print(f"   Pose imgsz: {POSE_IMGSZ}px, Mobile imgsz: {MOBILE_IMGSZ}px")
+    print(f"   Stream: ALL frames at {STREAM_FPS}fps (persistent annotations)")
+    print(f"   Grace period: {GRACE_PERIOD} processed frames (~3 seconds)")
+    print(f"   Mobile confidence: {MOBILE_CONF}")
+    print(f"   GPU: {'FP16 half-precision' if use_half_precision else 'FP32'}")
+    print(f"   Expected: ~{actual_total / STREAM_FPS:.0f}s streaming")
+
+    # COCO skeleton connections
+    skeleton_connections = [
+        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+        (5, 11), (6, 12), (11, 12),
+        (11, 13), (13, 15), (12, 14), (14, 16),
+        (0, 1), (0, 2), (1, 3), (2, 4)
+    ]
+
+    # Thread-safe queue for frame transfer
+    frame_queue = Queue(maxsize=600)
+    processing_complete = threading.Event()
+    processing_error = [None]
+
+    print(f"\n▶️ Starting threaded pipeline...\n")
+    pipeline_start = time_module.time()
+
+    def processing_worker():
+        """Process entire video at MAX GPU speed in background thread.
+        
+        All detection state is LOCAL to this thread - no shared mutable state.
+        Only communicates with main thread via thread-safe Queue and Event.
+        """
+        try:
+            worker_start = time_module.time()
+
+            # ===== ALL STATE IS LOCAL TO THIS THREAD =====
+            frame_count = 0
+            frames_processed = 0
+
+            detections_count = {
+                'leaning': 0, 'mobile': 0, 'turning': 0, 'passing': 0, 'hand_raise': 0
+            }
+
+            # Frame counters for threshold detection
+            leaning_frames = 0
+            passing_frames = 0
+            mobile_frames = 0
+            turning_frames = 0
+            hand_raise_frames = 0
+
+            # Max frame counters for debugging
+            max_leaning_frames = 0
+            max_passing_frames = 0
+            max_mobile_frames = 0
+            max_turning_frames = 0
+            max_hand_raise_frames = 0
+
+            # Grace period counters
+            leaning_grace_frames = 0
+            passing_grace_frames = 0
+            mobile_grace_frames = 0
+            turning_grace_frames = 0
+            hand_raise_grace_frames = 0
+
+            # Recording states
+            leaning_in_progress = False
+            leaning_recording = False
+            leaning_video = None
+
+            passing_in_progress = False
+            passing_recording = False
+            passing_video = None
+
+            mobile_in_progress = False
+            mobile_recording = False
+            mobile_video = None
+
+            turning_in_progress = False
+            turning_recording = False
+            turning_video = None
+
+            hand_raise_in_progress = False
+            hand_raise_recording = False
+            hand_raise_video = None
+
+            # Temporary video files
+            ml_dir = os.path.dirname(__file__)
+            temp_leaning = os.path.join(ml_dir, "temp_leaning.mp4")
+            temp_passing = os.path.join(ml_dir, "temp_passing.mp4")
+            temp_mobile = os.path.join(ml_dir, "temp_mobile.mp4")
+            temp_turning = os.path.join(ml_dir, "temp_turning.mp4")
+            temp_hand_raise = os.path.join(ml_dir, "temp_hand_raise.mp4")
+
+            # Circular buffer for 1.5s pre-roll
+            buffer_size = int(1.5 * actual_fps)
+            frame_buffer = deque(maxlen=buffer_size)
+            print(f"💾 Frame Buffer: {buffer_size} frames (1.5 seconds pre-roll)")
+
+            # Persistent annotation state (carried between YOLO runs for smooth visuals)
+            last_keypoints_list = []
+            last_mobile_boxes = []
+
+            # ===== MAIN PROCESSING LOOP =====
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame_count += 1
+
+                # Resize only if ffmpeg transcode failed (fallback)
+                if needs_resize:
+                    frame = cv2.resize(frame, (frame_width, frame_height))
+
+                # Add to circular buffer (for pre-roll recording)
+                frame_buffer.append(frame.copy())
+
+                # Write ALL frames to ongoing recordings (smooth 30fps playback)
+                if leaning_in_progress and leaning_recording and leaning_video:
+                    leaning_video.write(frame)
+                if mobile_in_progress and mobile_recording and mobile_video:
+                    mobile_video.write(frame)
+                if passing_in_progress and passing_recording and passing_video:
+                    passing_video.write(frame)
+                if turning_in_progress and turning_recording and turning_video:
+                    turning_video.write(frame)
+                if hand_raise_in_progress and hand_raise_recording and hand_raise_video:
+                    hand_raise_video.write(frame)
+
+                # Create display frame for streaming
+                display_frame = frame.copy()
+
+                # ===== YOLO FRAME: Full AI detection =====
+                if frame_count % FRAME_SKIP == 0:
+                    frames_processed += 1
+
+                    # Reset detection flags
+                    leaning_this_frame = False
+                    passing_this_frame = False
+                    mobile_this_frame = False
+                    turning_this_frame = False
+                    hand_raise_this_frame = False
+
+                    # --- Pose Detection (imgsz=416 for speed) ---
+                    pose_results = pose_model(frame, verbose=False, half=use_half_precision, imgsz=POSE_IMGSZ)
+
+                    last_keypoints_list = []
+                    wrist_positions = []  # For multi-person passing detection
+                    all_person_keypoints = []  # Raw xy keypoints per person
+
+                    for result in pose_results:
+                        if result.keypoints is not None and len(result.keypoints) > 0:
+                            # Also get xy-only keypoints for passing detection
+                            kpts_xy = result.keypoints.xy.cpu().numpy() if hasattr(result.keypoints, 'xy') else None
+
+                            for p_idx, keypoints in enumerate(result.keypoints.data):
+                                keypoints_np = keypoints.cpu().numpy()
+                                last_keypoints_list.append(keypoints_np)
+
+                                # Collect wrists for multi-person passing detection
+                                if len(keypoints_np) >= 11:
+                                    lw = keypoints_np[9]  # left wrist
+                                    rw = keypoints_np[10]  # right wrist
+                                    if lw[2] > 0.3 and rw[2] > 0.3:
+                                        wrist_positions.append([lw[:2], rw[:2]])
+                                        all_person_keypoints.append(keypoints_np)
+
+                                # Draw skeleton keypoints
+                                for i, (x, y, conf) in enumerate(keypoints_np):
+                                    if conf > 0.5:
+                                        cv2.circle(display_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+
+                                # Draw skeleton connections
+                                for start_idx, end_idx in skeleton_connections:
+                                    if start_idx < len(keypoints_np) and end_idx < len(keypoints_np):
+                                        sp = keypoints_np[start_idx]
+                                        ep = keypoints_np[end_idx]
+                                        if sp[2] > 0.5 and ep[2] > 0.5:
+                                            cv2.line(display_frame,
+                                                    (int(sp[0]), int(sp[1])),
+                                                    (int(ep[0]), int(ep[1])),
+                                                    (0, 255, 0), 2)
+
+                                # Check turning back FIRST (priority over leaning)
+                                if is_turning_back(keypoints_np):
+                                    turning_this_frame = True
+                                elif is_leaning(keypoints_np, frame_width, frame_height):
+                                    # Only flag leaning if NOT turning back
+                                    leaning_this_frame = True
+                                if is_hand_raised(keypoints_np):
+                                    hand_raise_this_frame = True
+
+                    # Multi-person passing paper detection (requires 2+ people)
+                    passing_detected, close_pairs = detect_passing_paper(wrist_positions, all_person_keypoints)
+                    if passing_detected:
+                        passing_this_frame = True
+
+                    # --- Mobile Detection (imgsz=640, higher res for small phone objects) ---
+                    mobile_results = mobile_model(frame, verbose=False, half=use_half_precision, imgsz=MOBILE_IMGSZ)
+                    last_mobile_boxes = []
+                    for result in mobile_results:
+                        if result.boxes is not None:
+                            for box in result.boxes:
+                                class_id = int(box.cls[0])
+                                if class_id == MOBILE_CLASS_ID and box.conf[0] > MOBILE_CONF:
+                                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                    conf_val = float(box.conf[0])
+                                    
+                                    # Smart filter: distinguish phones from calculators
+                                    is_phone, reason = is_likely_phone(x1, y1, x2, y2, conf_val, frame_width, frame_height)
+                                    if is_phone:
+                                        mobile_this_frame = True
+                                        last_mobile_boxes.append((x1, y1, x2, y2, conf_val))
+                                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), COLOR_MOBILE, 3)
+                                        cv2.putText(display_frame, f"Mobile {conf_val:.2f}",
+                                                   (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_MOBILE, 2)
+                                    else:
+                                        # Draw filtered detection in gray (visible but not flagged)
+                                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), (128, 128, 128), 1)
+                                        cv2.putText(display_frame, f"Filtered: {reason[:30]}",
+                                                   (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 128, 128), 1)
+                                        if frame_count % 30 == 0:  # Log every 30th frame to avoid spam
+                                            print(f"\U0001f6ab Mobile filtered: {reason}")
+
+                    # Update frame counters
+                    leaning_frames = leaning_frames + 1 if leaning_this_frame else 0
+                    passing_frames = passing_frames + 1 if passing_this_frame else 0
+                    mobile_frames = mobile_frames + 1 if mobile_this_frame else 0
+                    turning_frames = turning_frames + 1 if turning_this_frame else 0
+                    hand_raise_frames = hand_raise_frames + 1 if hand_raise_this_frame else 0
+
+                    # Update max counters
+                    max_leaning_frames = max(max_leaning_frames, leaning_frames)
+                    max_passing_frames = max(max_passing_frames, passing_frames)
+                    max_mobile_frames = max(max_mobile_frames, mobile_frames)
+                    max_turning_frames = max(max_turning_frames, turning_frames)
+                    max_hand_raise_frames = max(max_hand_raise_frames, hand_raise_frames)
+
+                    # ===== RECORDING LOGIC WITH GRACE PERIOD =====
+
+                    # LEANING
+                    if leaning_frames >= LEANING_THRESHOLD:
+                        leaning_grace_frames = 0
+                        if not leaning_in_progress:
+                            leaning_in_progress = True
+                            leaning_recording = True
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            leaning_video = cv2.VideoWriter(temp_leaning, fourcc, fps, (frame_width, frame_height))
+                            print(f"\n▶️ LEANING detected! Writing {len(frame_buffer)} buffered frames (1.5s pre-roll)...")
+                            for bf in frame_buffer:
+                                leaning_video.write(bf)
+                            print(f"   ✅ Buffer written, continuing live recording...")
+                    else:
+                        if leaning_in_progress:
+                            leaning_grace_frames += 1
+                            if leaning_grace_frames >= GRACE_PERIOD:
+                                leaning_in_progress = False
+                                if leaning_recording and leaning_video:
+                                    leaning_video.release()
+                                    leaning_video = None
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    final_filename = f"leaning_{timestamp}.mp4"
+                                    final_path = os.path.join(MEDIA_DIR, final_filename)
+                                    if os.path.exists(temp_leaning):
+                                        print(f"\n  💾 Grace period ended - saving leaning clip")
+                                        shutil.copy(temp_leaning, final_path)
+                                        save_video_to_database(LEANING_ACTION, final_path, lecture_hall_id)
+                                        detections_count['leaning'] += 1
+                                    leaning_recording = False
+                                leaning_grace_frames = 0
+
+                    # MOBILE
+                    if mobile_frames >= MOBILE_THRESHOLD:
+                        mobile_grace_frames = 0
+                        if not mobile_in_progress:
+                            mobile_in_progress = True
+                            mobile_recording = True
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            mobile_video = cv2.VideoWriter(temp_mobile, fourcc, fps, (frame_width, frame_height))
+                            print(f"\n▶️ MOBILE detected! Writing {len(frame_buffer)} buffered frames (1.5s pre-roll)...")
+                            for bf in frame_buffer:
+                                mobile_video.write(bf)
+                            print(f"   ✅ Buffer written, continuing live recording...")
+                    else:
+                        if mobile_in_progress:
+                            mobile_grace_frames += 1
+                            if mobile_grace_frames >= GRACE_PERIOD:
+                                mobile_in_progress = False
+                                if mobile_recording and mobile_video:
+                                    mobile_video.release()
+                                    mobile_video = None
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    final_filename = f"mobile_{timestamp}.mp4"
+                                    final_path = os.path.join(MEDIA_DIR, final_filename)
+                                    if os.path.exists(temp_mobile):
+                                        print(f"\n  💾 Grace period ended - saving mobile clip")
+                                        shutil.copy(temp_mobile, final_path)
+                                        save_video_to_database(ACTION_MOBILE, final_path, lecture_hall_id)
+                                        detections_count['mobile'] += 1
+                                    mobile_recording = False
+                                mobile_grace_frames = 0
+
+                    # PASSING PAPER
+                    if passing_frames >= PASSING_THRESHOLD:
+                        passing_grace_frames = 0
+                        if not passing_in_progress:
+                            passing_in_progress = True
+                            passing_recording = True
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            passing_video = cv2.VideoWriter(temp_passing, fourcc, fps, (frame_width, frame_height))
+                            print(f"\n▶️ PASSING PAPER detected! Writing {len(frame_buffer)} buffered frames (1.5s pre-roll)...")
+                            for bf in frame_buffer:
+                                passing_video.write(bf)
+                            print(f"   ✅ Buffer written, continuing live recording...")
+                    else:
+                        if passing_in_progress:
+                            passing_grace_frames += 1
+                            if passing_grace_frames >= GRACE_PERIOD:
+                                passing_in_progress = False
+                                if passing_recording and passing_video:
+                                    passing_video.release()
+                                    passing_video = None
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    final_filename = f"passing_{timestamp}.mp4"
+                                    final_path = os.path.join(MEDIA_DIR, final_filename)
+                                    if os.path.exists(temp_passing):
+                                        print(f"\n  💾 Grace period ended - saving passing paper clip")
+                                        shutil.copy(temp_passing, final_path)
+                                        save_video_to_database(PASSING_ACTION, final_path, lecture_hall_id)
+                                        detections_count['passing'] += 1
+                                    passing_recording = False
+                                passing_grace_frames = 0
+
+                    # TURNING BACK
+                    if turning_frames >= TURNING_THRESHOLD:
+                        turning_grace_frames = 0
+                        if not turning_in_progress:
+                            turning_in_progress = True
+                            turning_recording = True
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            turning_video = cv2.VideoWriter(temp_turning, fourcc, fps, (frame_width, frame_height))
+                            print(f"\n▶️ TURNING BACK detected! Writing {len(frame_buffer)} buffered frames (1.5s pre-roll)...")
+                            for bf in frame_buffer:
+                                turning_video.write(bf)
+                            print(f"   ✅ Buffer written, continuing live recording...")
+                    else:
+                        if turning_in_progress:
+                            turning_grace_frames += 1
+                            if turning_grace_frames >= GRACE_PERIOD:
+                                turning_in_progress = False
+                                if turning_recording and turning_video:
+                                    turning_video.release()
+                                    turning_video = None
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    final_filename = f"turning_{timestamp}.mp4"
+                                    final_path = os.path.join(MEDIA_DIR, final_filename)
+                                    if os.path.exists(temp_turning):
+                                        print(f"\n  💾 Grace period ended - saving turning back clip")
+                                        shutil.copy(temp_turning, final_path)
+                                        save_video_to_database(TURNING_ACTION, final_path, lecture_hall_id)
+                                        detections_count['turning'] += 1
+                                    turning_recording = False
+                                turning_grace_frames = 0
+
+                    # HAND RAISE
+                    if hand_raise_frames >= HAND_RAISE_THRESHOLD:
+                        hand_raise_grace_frames = 0
+                        if not hand_raise_in_progress:
+                            hand_raise_in_progress = True
+                            hand_raise_recording = True
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            hand_raise_video = cv2.VideoWriter(temp_hand_raise, fourcc, fps, (frame_width, frame_height))
+                            print(f"\n▶️ HAND RAISED detected! Writing {len(frame_buffer)} buffered frames (1.5s pre-roll)...")
+                            for bf in frame_buffer:
+                                hand_raise_video.write(bf)
+                            print(f"   ✅ Buffer written, continuing live recording...")
+                    else:
+                        if hand_raise_in_progress:
+                            hand_raise_grace_frames += 1
+                            if hand_raise_grace_frames >= GRACE_PERIOD:
+                                hand_raise_in_progress = False
+                                if hand_raise_recording and hand_raise_video:
+                                    hand_raise_video.release()
+                                    hand_raise_video = None
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    final_filename = f"hand_raise_{timestamp}.mp4"
+                                    final_path = os.path.join(MEDIA_DIR, final_filename)
+                                    if os.path.exists(temp_hand_raise):
+                                        print(f"\n  💾 Grace period ended - saving hand raise clip")
+                                        shutil.copy(temp_hand_raise, final_path)
+                                        save_video_to_database(HAND_RAISE_ACTION, final_path, lecture_hall_id)
+                                        detections_count['hand_raise'] += 1
+                                    hand_raise_recording = False
+                                hand_raise_grace_frames = 0
+
+                    # ===== YOLO FRAME: Add overlays, encode and queue for streaming =====
+                    y_offset = 50
+                    if leaning_frames > 0:
+                        cv2.putText(display_frame, f"LEANING! ({leaning_frames}/{LEANING_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_LEANING, 3)
+                        y_offset += 40
+                    if mobile_frames > 0:
+                        cv2.putText(display_frame, f"MOBILE! ({mobile_frames}/{MOBILE_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_MOBILE, 3)
+                        y_offset += 40
+                    if turning_frames > 0:
+                        cv2.putText(display_frame, f"TURNING BACK! ({turning_frames}/{TURNING_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_TURNING, 3)
+                        y_offset += 40
+                    if passing_frames > 0:
+                        cv2.putText(display_frame, f"PASSING PAPER! ({passing_frames}/{PASSING_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_PASSING, 3)
+                        y_offset += 40
+                    if hand_raise_frames > 0:
+                        cv2.putText(display_frame, f"HAND RAISED! ({hand_raise_frames}/{HAND_RAISE_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_HAND_RAISE, 3)
+                        y_offset += 40
+
+                    # Progress bar
+                    progress = frame_count / total_frames if total_frames > 0 else 0
+                    if total_frames - frame_count <= 5:
+                        progress = 1.0
+                    bar_width = int(progress * frame_width)
+                    cv2.rectangle(display_frame, (0, frame_height - 20), (bar_width, frame_height), (0, 255, 0), -1)
+                    cv2.putText(display_frame, f"Processing: {progress*100:.1f}% | Frame: {frame_count}/{total_frames}",
+                               (10, frame_height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+                    ret_enc, enc_buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                    if ret_enc:
+                        try:
+                            frame_queue.put(enc_buffer.tobytes(), timeout=10)
+                        except:
+                            pass  # Queue full, skip frame
+
+                else:
+                    # ===== NON-YOLO FRAME: Draw persistent annotations from last YOLO run =====
+                    # This gives smooth visual feedback at full frame rate
+                    for keypoints_np in last_keypoints_list:
+                        for i, (x, y, conf) in enumerate(keypoints_np):
+                            if conf > 0.5:
+                                cv2.circle(display_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+                        for start_idx, end_idx in skeleton_connections:
+                            if start_idx < len(keypoints_np) and end_idx < len(keypoints_np):
+                                sp = keypoints_np[start_idx]
+                                ep = keypoints_np[end_idx]
+                                if sp[2] > 0.5 and ep[2] > 0.5:
+                                    cv2.line(display_frame,
+                                            (int(sp[0]), int(sp[1])),
+                                            (int(ep[0]), int(ep[1])),
+                                            (0, 255, 0), 2)
+
+                    for (x1, y1, x2, y2, conf_val) in last_mobile_boxes:
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), COLOR_MOBILE, 3)
+                        cv2.putText(display_frame, f"Mobile {conf_val:.2f}",
+                                   (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_MOBILE, 2)
+
+                    # Detection text overlays
+                    y_offset = 50
+                    if leaning_frames > 0:
+                        cv2.putText(display_frame, f"LEANING! ({leaning_frames}/{LEANING_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_LEANING, 3)
+                        y_offset += 40
+                    if mobile_frames > 0:
+                        cv2.putText(display_frame, f"MOBILE! ({mobile_frames}/{MOBILE_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_MOBILE, 3)
+                        y_offset += 40
+                    if turning_frames > 0:
+                        cv2.putText(display_frame, f"TURNING BACK! ({turning_frames}/{TURNING_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_TURNING, 3)
+                        y_offset += 40
+                    if passing_frames > 0:
+                        cv2.putText(display_frame, f"PASSING PAPER! ({passing_frames}/{PASSING_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_PASSING, 3)
+                        y_offset += 40
+                    if hand_raise_frames > 0:
+                        cv2.putText(display_frame, f"HAND RAISED! ({hand_raise_frames}/{HAND_RAISE_THRESHOLD})",
+                                   (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.0, COLOR_HAND_RAISE, 3)
+                        y_offset += 40
+
+                    # Progress bar
+                    progress = frame_count / total_frames if total_frames > 0 else 0
+                    if total_frames - frame_count <= 5:
+                        progress = 1.0
+                    bar_width = int(progress * frame_width)
+                    cv2.rectangle(display_frame, (0, frame_height - 20), (bar_width, frame_height), (0, 255, 0), -1)
+                    cv2.putText(display_frame, f"Processing: {progress*100:.1f}% | Frame: {frame_count}/{total_frames}",
+                               (10, frame_height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+                    ret_enc, enc_buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                    if ret_enc:
+                        try:
+                            frame_queue.put(enc_buffer.tobytes(), timeout=10)
+                        except:
+                            pass
+
+            # ===== END OF VIDEO - Save any ongoing recordings =====
+            print(f"\n{'='*60}")
+            print(f"VIDEO ENDED - Saving any ongoing recordings...")
+            print(f"{'='*60}")
+
+            worker_elapsed = time_module.time() - worker_start
+            print(f"⚡ GPU processing completed in {worker_elapsed:.1f} seconds")
+
+            # Save incomplete leaning recording
+            if leaning_in_progress and leaning_recording and leaning_video:
+                print(f"\n💾 Saving incomplete LEANING recording...")
+                leaning_video.release()
+                leaning_video = None
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                final_filename = f"leaning_{timestamp}.mp4"
+                final_path = os.path.join(MEDIA_DIR, final_filename)
+                if os.path.exists(temp_leaning):
+                    shutil.copy(temp_leaning, final_path)
+                    save_video_to_database(LEANING_ACTION, final_path, lecture_hall_id)
+                    detections_count['leaning'] += 1
+
+            # Save incomplete mobile recording
+            if mobile_in_progress and mobile_recording and mobile_video:
+                print(f"\n💾 Saving incomplete MOBILE recording...")
+                mobile_video.release()
+                mobile_video = None
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                final_filename = f"mobile_{timestamp}.mp4"
+                final_path = os.path.join(MEDIA_DIR, final_filename)
+                if os.path.exists(temp_mobile):
+                    shutil.copy(temp_mobile, final_path)
+                    save_video_to_database(ACTION_MOBILE, final_path, lecture_hall_id)
+                    detections_count['mobile'] += 1
+
+            # Save incomplete passing paper recording
+            if passing_in_progress and passing_recording and passing_video:
+                print(f"\n💾 Saving incomplete PASSING PAPER recording...")
+                passing_video.release()
+                passing_video = None
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                final_filename = f"passing_{timestamp}.mp4"
+                final_path = os.path.join(MEDIA_DIR, final_filename)
+                if os.path.exists(temp_passing):
+                    shutil.copy(temp_passing, final_path)
+                    save_video_to_database(PASSING_ACTION, final_path, lecture_hall_id)
+                    detections_count['passing'] += 1
+
+            # Save incomplete turning back recording
+            if turning_in_progress and turning_recording and turning_video:
+                print(f"\n💾 Saving incomplete TURNING BACK recording...")
+                turning_video.release()
+                turning_video = None
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                final_filename = f"turning_{timestamp}.mp4"
+                final_path = os.path.join(MEDIA_DIR, final_filename)
+                if os.path.exists(temp_turning):
+                    shutil.copy(temp_turning, final_path)
+                    save_video_to_database(TURNING_ACTION, final_path, lecture_hall_id)
+                    detections_count['turning'] += 1
+
+            # Save incomplete hand raise recording
+            if hand_raise_in_progress and hand_raise_recording and hand_raise_video:
+                print(f"\n💾 Saving incomplete HAND RAISE recording...")
+                hand_raise_video.release()
+                hand_raise_video = None
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                final_filename = f"hand_raise_{timestamp}.mp4"
+                final_path = os.path.join(MEDIA_DIR, final_filename)
+                if os.path.exists(temp_hand_raise):
+                    shutil.copy(temp_hand_raise, final_path)
+                    save_video_to_database(HAND_RAISE_ACTION, final_path, lecture_hall_id)
+                    detections_count['hand_raise'] += 1
+
+            # Cleanup video capture and writers
+            cap.release()
+            for vw in [leaning_video, mobile_video, passing_video, turning_video, hand_raise_video]:
+                if vw:
+                    vw.release()
+
+            # Delete temp files
+            for temp_file in [temp_leaning, temp_mobile, temp_passing, temp_turning, temp_hand_raise]:
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                        print(f"🗑️ Deleted temp file: {os.path.basename(temp_file)}")
+                    except:
+                        pass
+
+            # Delete transcode temp file
+            if transcode_path and os.path.exists(transcode_path):
+                try:
+                    os.remove(transcode_path)
+                    print(f"🗑️ Deleted transcode temp: {os.path.basename(transcode_path)}")
+                except:
+                    pass
+
+            # Print summary
+            print(f"\n{'='*60}")
+            print(f"✅ VIDEO PROCESSING COMPLETE")
+
+            print(f"\n🔍 Detection Analysis (max consecutive frames):")
+            print(f"   Leaning: {max_leaning_frames} frames (threshold: {LEANING_THRESHOLD})")
+            print(f"   Passing: {max_passing_frames} frames (threshold: {PASSING_THRESHOLD})")
+            print(f"   Mobile: {max_mobile_frames} frames (threshold: {MOBILE_THRESHOLD})")
+            print(f"   Turning: {max_turning_frames} frames (threshold: {TURNING_THRESHOLD})")
+            print(f"   Hand Raise: {max_hand_raise_frames} frames (threshold: {HAND_RAISE_THRESHOLD})")
+
+            print(f"\n📊 Total Detections Saved to Database:")
+            detections_found = False
+            total_detections = 0
+            for action, count in detections_count.items():
+                if count > 0:
+                    print(f"   ✅ {action}: {count}")
+                    detections_found = True
+                    total_detections += count
+
+            if not detections_found:
+                print(f"   ⚠️ No malpractice detections saved to database")
+                print(f"   💡 Possible reasons:")
+                print(f"      - Detections didn't reach threshold ({LEANING_THRESHOLD} frames)")
+                print(f"      - No suspicious behavior detected in the video")
+
+            print(f"{'='*60}\n")
+
+            # Create completion frame
+            completion_frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+            completion_frame[:] = (40, 40, 40)
+
+            title = "PROCESSING COMPLETE"
+            title_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 4)[0]
+            title_x = (frame_width - title_size[0]) // 2
+            cv2.putText(completion_frame, title, (title_x, 100),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 4)
+
+            center_x = frame_width // 2
+            cv2.circle(completion_frame, (center_x, 200), 60, (0, 255, 0), 5)
+
+            total_elapsed = time_module.time() - worker_start
+            speed_text = f"Processed in {total_elapsed:.1f}s (GPU: {worker_elapsed:.1f}s)"
+            speed_size = cv2.getTextSize(speed_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            speed_x = (frame_width - speed_size[0]) // 2
+            cv2.putText(completion_frame, speed_text, (speed_x, 280),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+
+            y_pos = 340
+            if detections_found:
+                summary_title = f"{total_detections} Malpractice(s) Detected & Saved"
+                summary_size = cv2.getTextSize(summary_title, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+                summary_x = (frame_width - summary_size[0]) // 2
+                cv2.putText(completion_frame, summary_title, (summary_x, y_pos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+
+                y_pos += 60
+                for action, count in detections_count.items():
+                    if count > 0:
+                        detail = f"{action.replace('_', ' ').title()}: {count}"
+                        detail_size = cv2.getTextSize(detail, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                        detail_x = (frame_width - detail_size[0]) // 2
+                        cv2.putText(completion_frame, detail, (detail_x, y_pos),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+                        y_pos += 40
+            else:
+                no_detection = "No malpractice detected"
+                no_detection_size = cv2.getTextSize(no_detection, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+                no_detection_x = (frame_width - no_detection_size[0]) // 2
+                cv2.putText(completion_frame, no_detection, (no_detection_x, y_pos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
+                y_pos += 60
+
+            y_pos += 40
+            instruction = "View details in Malpractice Logs section"
+            inst_size = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            inst_x = (frame_width - inst_size[0]) // 2
+            cv2.putText(completion_frame, instruction, (inst_x, y_pos),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 200, 255), 2)
+
+            cv2.rectangle(completion_frame, (0, frame_height - 20), (frame_width, frame_height), (0, 255, 0), -1)
+            cv2.putText(completion_frame, "Processing: 100.0% | Complete",
+                       (10, frame_height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+            # Queue completion frame for ~1.5 seconds display
+            ret_enc, enc_buffer = cv2.imencode('.jpg', completion_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ret_enc:
+                completion_bytes = enc_buffer.tobytes()
+                for _ in range(20):  # ~20 frames for completion screen display
+                    try:
+                        frame_queue.put(completion_bytes, timeout=5)
+                    except:
+                        break
+
+        except Exception as e:
+            processing_error[0] = e
+            import traceback
+            traceback.print_exc()
+        finally:
+            processing_complete.set()
+
+    # ===== START PROCESSING THREAD =====
+    worker = threading.Thread(target=processing_worker, daemon=True)
+    worker.start()
+    print(f"🧵 Processing thread started (ID: {worker.ident})")
+
+    # ===== YIELD FRAMES AT 25 FPS (smooth paced streaming) =====
+    # Processing is fast (720p decode + GPU), so frames buffer ahead.
+    # We pace output at 25fps for smooth visual feedback.
+    frames_yielded = 0
+    target_interval = 1.0 / STREAM_FPS  # 0.04s = 25fps
+
+    while not processing_complete.is_set() or not frame_queue.empty():
+        frame_start = time_module.time()
+        try:
+            frame_data = frame_queue.get(timeout=1.0)
+        except Empty:
+            if processing_complete.is_set():
+                break
+            continue
+
+        yield frame_data
+        frames_yielded += 1
+
+        # Pace at 25fps
+        elapsed = time_module.time() - frame_start
+        if elapsed < target_interval:
+            time_module.sleep(target_interval - elapsed)
+
+    # Drain any remaining frames in queue (still paced)
+    while not frame_queue.empty():
+        frame_start = time_module.time()
+        try:
+            frame_data = frame_queue.get_nowait()
+            yield frame_data
+            frames_yielded += 1
+            elapsed = time_module.time() - frame_start
+            if elapsed < target_interval:
+                time_module.sleep(target_interval - elapsed)
+        except Empty:
+            break
+
+    # Wait for worker to finish (should already be done)
+    worker.join(timeout=5)
+
+    total_time = time_module.time() - pipeline_start
+    print(f"\n🏁 Streaming complete: {frames_yielded} frames in {total_time:.1f}s ({frames_yielded/total_time:.1f} fps effective)")
+
+    if processing_error[0]:
+        print(f"❌ Processing error occurred: {processing_error[0]}")

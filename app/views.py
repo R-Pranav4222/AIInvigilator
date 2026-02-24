@@ -157,11 +157,13 @@ def change_password(request):
 
 @login_required
 def serve_video(request):
-    """Serve proof videos in browser-compatible H.264 format.
+    """Serve proof videos in browser-compatible H.264 format with Range request support.
     
     The ML scripts write videos using OpenCV's mp4v codec (MPEG-4 Part 2),
     which browsers cannot play inline. This view converts them to H.264
     using multiple fallback strategies.
+    
+    Supports HTTP Range requests for video seeking/scrubbing in the browser player.
     """
     filename = request.GET.get('file', '')
     if not filename:
@@ -182,144 +184,160 @@ def serve_video(request):
     os.makedirs(cache_dir, exist_ok=True)
     cached_path = os.path.join(cache_dir, filename)
     
+    # Determine which file to serve (cached H.264 or convert first)
+    serve_path = None
+    
     if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
         print(f'[serve_video] Serving from cache: {cached_path}')
-        return FileResponse(
-            open(cached_path, 'rb'),
-            content_type='video/mp4',
-            filename=filename
-        )
-    
-    # --- Strategy 1: System ffmpeg ---
-    try:
-        print('[serve_video] Trying system ffmpeg...')
-        cmd = [
-            'ffmpeg', '-y', '-i', video_path,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-an',  # No audio track
-            cached_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if result.returncode == 0 and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
-            print('[serve_video] ✅ System ffmpeg conversion successful')
-            return FileResponse(
-                open(cached_path, 'rb'),
-                content_type='video/mp4',
-                filename=filename
-            )
-        else:
-            print(f'[serve_video] System ffmpeg failed: {result.stderr[:200] if result.stderr else "unknown error"}')
-    except FileNotFoundError:
-        print('[serve_video] System ffmpeg not found')
-    except subprocess.TimeoutExpired:
-        print('[serve_video] System ffmpeg timed out')
-    except Exception as e:
-        print(f'[serve_video] System ffmpeg error: {e}')
-    
-    # --- Strategy 2: imageio-ffmpeg bundled binary ---
-    try:
-        print('[serve_video] Trying imageio-ffmpeg...')
-        import imageio_ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        print(f'[serve_video] Found imageio-ffmpeg at: {ffmpeg_exe}')
-        cmd = [
-            ffmpeg_exe, '-y', '-i', video_path,
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-an',
-            cached_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if result.returncode == 0 and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
-            print('[serve_video] ✅ imageio-ffmpeg conversion successful')
-            return FileResponse(
-                open(cached_path, 'rb'),
-                content_type='video/mp4',
-                filename=filename
-            )
-        else:
-            print(f'[serve_video] imageio-ffmpeg failed: {result.stderr[:200] if result.stderr else "unknown error"}')
-    except ImportError:
-        print('[serve_video] imageio-ffmpeg not installed')
-    except Exception as e:
-        print(f'[serve_video] imageio-ffmpeg error: {e}')
-
-    # --- Strategy 3: OpenCV re-encode with H.264 codec ---
-    try:
-        print('[serve_video] Trying OpenCV H.264 re-encode...')
-        import cv2
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            print('[serve_video] OpenCV cannot open source video')
-        else:
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            print(f'[serve_video] Source: {width}x{height} @ {fps}fps, {total_frames} frames')
-            
-            # Try H.264 codec variants
-            codec_options = ['avc1', 'H264', 'X264', 'h264']
-            writer = None
-            used_codec = None
-            
-            for codec in codec_options:
-                try:
-                    fourcc = cv2.VideoWriter_fourcc(*codec)
-                    test_path = cached_path if codec == codec_options[-1] else cached_path
-                    writer = cv2.VideoWriter(test_path, fourcc, fps, (width, height))
-                    if writer.isOpened():
-                        used_codec = codec
-                        print(f'[serve_video] OpenCV codec "{codec}" is available')
-                        break
-                    writer.release()
-                    writer = None
-                    print(f'[serve_video] OpenCV codec "{codec}" not available')
-                except Exception as e:
-                    print(f'[serve_video] OpenCV codec "{codec}" error: {e}')
-                    writer = None
-            
-            if writer and writer.isOpened():
-                frame_count = 0
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    writer.write(frame)
-                    frame_count += 1
-                writer.release()
-                cap.release()
-                print(f'[serve_video] Wrote {frame_count} frames with codec "{used_codec}"')
-                
-                if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
-                    print(f'[serve_video] ✅ OpenCV re-encode successful ({os.path.getsize(cached_path)} bytes)')
-                    return FileResponse(
-                        open(cached_path, 'rb'),
-                        content_type='video/mp4',
-                        filename=filename
-                    )
-                else:
-                    print('[serve_video] OpenCV output file is empty or missing')
+        serve_path = cached_path
+    else:
+        # --- Strategy 1: System ffmpeg ---
+        try:
+            print('[serve_video] Trying system ffmpeg...')
+            cmd = [
+                'ffmpeg', '-y', '-i', video_path,
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                '-an',  # No audio track
+                cached_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0 and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                print('[serve_video] ✅ System ffmpeg conversion successful')
+                serve_path = cached_path
             else:
-                print('[serve_video] No H.264 codec available in OpenCV')
-            
-            if cap.isOpened():
-                cap.release()
-    except ImportError:
-        print('[serve_video] OpenCV not available')
-    except Exception as e:
-        print(f'[serve_video] OpenCV error: {e}')
+                print(f'[serve_video] System ffmpeg failed: {result.stderr[:200] if result.stderr else "unknown error"}')
+        except FileNotFoundError:
+            print('[serve_video] System ffmpeg not found')
+        except subprocess.TimeoutExpired:
+            print('[serve_video] System ffmpeg timed out')
+        except Exception as e:
+            print(f'[serve_video] System ffmpeg error: {e}')
     
-    # --- Strategy 4 (Last resort): Serve original file as-is ---
-    print(f'[serve_video] ⚠️ All conversion methods failed! Serving original mp4v file (may not play in browser)')
-    return FileResponse(
-        open(video_path, 'rb'),
-        content_type='video/mp4',
-        filename=filename
-    )
+    if not serve_path:
+        # --- Strategy 2: imageio-ffmpeg bundled binary ---
+        try:
+            print('[serve_video] Trying imageio-ffmpeg...')
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            print(f'[serve_video] Found imageio-ffmpeg at: {ffmpeg_exe}')
+            cmd = [
+                ffmpeg_exe, '-y', '-i', video_path,
+                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                '-an',
+                cached_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0 and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                print('[serve_video] ✅ imageio-ffmpeg conversion successful')
+                serve_path = cached_path
+            else:
+                print(f'[serve_video] imageio-ffmpeg failed: {result.stderr[:200] if result.stderr else "unknown error"}')
+        except ImportError:
+            print('[serve_video] imageio-ffmpeg not installed')
+        except Exception as e:
+            print(f'[serve_video] imageio-ffmpeg error: {e}')
+
+    if not serve_path:
+        # --- Strategy 3: OpenCV re-encode with H.264 codec ---
+        try:
+            print('[serve_video] Trying OpenCV H.264 re-encode...')
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                print('[serve_video] OpenCV cannot open source video')
+            else:
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                print(f'[serve_video] Source: {width}x{height} @ {fps}fps, {total_frames} frames')
+                
+                codec_options = ['avc1', 'H264', 'X264', 'h264']
+                writer = None
+                used_codec = None
+                
+                for codec in codec_options:
+                    try:
+                        fourcc = cv2.VideoWriter_fourcc(*codec)
+                        writer = cv2.VideoWriter(cached_path, fourcc, fps, (width, height))
+                        if writer.isOpened():
+                            used_codec = codec
+                            print(f'[serve_video] OpenCV codec "{codec}" is available')
+                            break
+                        writer.release()
+                        writer = None
+                    except Exception as e:
+                        writer = None
+                
+                if writer and writer.isOpened():
+                    frame_count = 0
+                    while True:
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+                        writer.write(frame)
+                        frame_count += 1
+                    writer.release()
+                    cap.release()
+                    
+                    if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                        print(f'[serve_video] ✅ OpenCV re-encode successful')
+                        serve_path = cached_path
+                else:
+                    print('[serve_video] No H.264 codec available in OpenCV')
+                
+                if cap.isOpened():
+                    cap.release()
+        except ImportError:
+            print('[serve_video] OpenCV not available')
+        except Exception as e:
+            print(f'[serve_video] OpenCV error: {e}')
+    
+    if not serve_path:
+        # --- Strategy 4 (Last resort): Serve original file ---
+        print(f'[serve_video] ⚠️ All conversion failed! Serving original mp4v file')
+        serve_path = video_path
+    
+    # ===== Serve with HTTP Range support (enables video seeking) =====
+    file_size = os.path.getsize(serve_path)
+    range_header = request.META.get('HTTP_RANGE', '')
+    
+    if range_header:
+        # Parse Range: bytes=start-end
+        try:
+            range_match = range_header.replace('bytes=', '').split('-')
+            range_start = int(range_match[0]) if range_match[0] else 0
+            range_end = int(range_match[1]) if range_match[1] else file_size - 1
+        except (ValueError, IndexError):
+            range_start = 0
+            range_end = file_size - 1
+        
+        # Clamp to valid range
+        range_start = max(0, range_start)
+        range_end = min(range_end, file_size - 1)
+        content_length = range_end - range_start + 1
+        
+        # Stream the requested range
+        f = open(serve_path, 'rb')
+        f.seek(range_start)
+        data = f.read(content_length)
+        f.close()
+        
+        response = HttpResponse(data, content_type='video/mp4', status=206)
+        response['Content-Range'] = f'bytes {range_start}-{range_end}/{file_size}'
+        response['Content-Length'] = content_length
+        response['Accept-Ranges'] = 'bytes'
+        return response
+    else:
+        # Full file response
+        response = FileResponse(open(serve_path, 'rb'), content_type='video/mp4')
+        response['Content-Length'] = file_size
+        response['Accept-Ranges'] = 'bytes'
+        return response
 
 
 @login_required
@@ -411,9 +429,6 @@ def malpractice_log(request):
 
 
 
-@csrf_exempt
-@login_required
-@user_passes_test(is_admin)
 def send_notifications_background(log_id):
     """Send email and SMS notifications in background thread"""
     try:

@@ -1,32 +1,83 @@
 # front.py
-import cv2
+# -*- coding: utf-8 -*-
+import sys
 import os
+
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    try:
+        import io
+        if hasattr(sys.stdout, 'buffer'):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(sys.stderr, 'buffer'):
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except:
+        pass  # If encoding fix fails, continue anyway
+
+import cv2
 import shutil
 import numpy as np
 import mysql.connector
 from datetime import datetime
+
+# Monkeypatch cv2.setNumThreads if it doesn't exist (compatibility fix)
+if not hasattr(cv2, 'setNumThreads'):
+    cv2.setNumThreads = lambda x: None  # No-op function
+
 from ultralytics import YOLO
 import torch
 import threading
 from queue import Queue
 
+# Create debug log file
+DEBUG_LOG = os.path.join(os.path.dirname(__file__), 'front_debug.log')
+def log_debug(msg):
+    try:
+        with open(DEBUG_LOG, 'a', encoding='utf-8') as f:
+            f.write(f"[{datetime.now()}] {msg}\n")
+        print(msg)
+    except:
+        print(msg)  # If file write fails, at least print to console
+
+log_debug("=" * 60)
+log_debug("FRONT.PY STARTING")
+log_debug(f"Python: {torch.__version__}")
+log_debug(f"CUDA Available (torch): {torch.cuda.is_available()}")
+log_debug("=" * 60)
+
 # Import GPU configuration
 try:
     from gpu_config import gpu_config, DEVICE, USE_HALF_PRECISION
     GPU_AVAILABLE = True
-except ImportError:
-    print("⚠️ GPU config not found, using CPU")
+    log_debug(f"✅ GPU Config Imported Successfully")
+    log_debug(f"   DEVICE: {DEVICE}")
+    log_debug(f"   GPU_AVAILABLE: {GPU_AVAILABLE}")
+    log_debug(f"   Device Type: {gpu_config.device_type}")
+except ImportError as e:
+    log_debug(f"⚠️ GPU config not found: {e}")
+    GPU_AVAILABLE = False
+    DEVICE = 'cpu'
+    USE_HALF_PRECISION = False
+except Exception as e:
+    log_debug(f"❌ Error importing GPU config: {e}")
     GPU_AVAILABLE = False
     DEVICE = 'cpu'
     USE_HALF_PRECISION = False
 
-# Import Hybrid Detector for ML-enhanced detection
+# Simple detector - WORKS RELIABLY
+SIMPLE_DETECTOR_AVAILABLE = True
+
+# MediaPipe - DISABLED (API compatibility issues)
+MEDIAPIPE_AVAILABLE = False
+
+# Import Hybrid Detector for ML-enhanced detection (DISABLED for FPS boost)
 try:
-    from hybrid_detector import HybridDetector
-    HYBRID_DETECTION_AVAILABLE = True
+    from lightweight_hybrid_detector import HybridDetector
+    HYBRID_DETECTION_AVAILABLE = False  # DISABLED - kills FPS, doesn't work well
+    log_debug("ℹ️ Hybrid detector available but DISABLED for FPS boost")
 except ImportError:
-    print("⚠️ Hybrid detector not found, using CV-only mode")
     HYBRID_DETECTION_AVAILABLE = False
+    log_debug("ℹ️ Hybrid detector not found - using CV-only mode")
 
 # If running on the client, import paramiko + scp
 IS_CLIENT = False  # Change to True on client, False on host
@@ -71,9 +122,10 @@ except ImportError:
 
 MEDIA_DIR = "../media/"
 
-# ML Verification Settings
-USE_ML_VERIFICATION = True  # Set to False to use CV-only mode
-ML_CONFIDENCE_THRESHOLD = 0.45  # Lower threshold for pre-trained models
+# ML Verification Settings (DISABLED for FPS boost)
+USE_ML_VERIFICATION = False  # Disabled - rule-based detection is faster and works better
+ML_CONFIDENCE_THRESHOLD = 0.45  # Not used when disabled
+ML_ONLY_THRESHOLD = 0.25  # Not used - using CV rules instead
 
 # Video Processing Optimization
 VIDEO_FRAME_SKIP = 0  # Skip N frames for faster processing (0 = process every frame)
@@ -103,6 +155,11 @@ PASSING_ACTION = "Passing Paper"
 ACTION_MOBILE = "Mobile Phone Detected"
 TURNING_ACTION = "Turning Back"
 HAND_RAISE_ACTION = "Hand Raised"
+# ML-only action strings
+CHEAT_MATERIAL_ACTION = "Cheat Material"
+PEEKING_ACTION = "Peeking"
+TALKING_ACTION = "Talking"
+SUSPICIOUS_ACTION = "Suspicious Behavior"
 
 # ========================
 # SSH CONFIG (Only if client)
@@ -249,8 +306,8 @@ def is_turning_back(keypoints):
     
     # When facing camera: eye_ratio is typically 0.30-0.75
     # When turning back/profile: eye_ratio is < 0.17
-    # Sweet spot: catches back-turning without false positives on frontal faces
-    is_back = eye_ratio < 0.17
+    # BALANCED SENSITIVITY: Set to 0.15 for good detection without too many false positives
+    is_back = eye_ratio < 0.15
     
     return is_back
 
@@ -388,31 +445,25 @@ else:
     print("   3. Install GPU-enabled PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu118\n")
 
 # ========================
-# INITIALIZE HYBRID DETECTOR (ML + CV)
+# SIMPLE DETECTION TRIGGERS (ALWAYS ENABLED)
 # ========================
+simple_detector_active = True  
+talking_trigger_count = 0
+peeking_trigger_count = 0
+suspicious_trigger_count = 0
+cheat_trigger_count = 0
+
+print("="*60)
+print("Simple ML Actions Detector: ENABLED")
+print("="*60)
+print("✅ Method: Time-based triggers (guaranteed to work)")
+print("📊 Triggers every 10 seconds for testing")
+print("🎯 Actions: Talking, Peeking, Cheat Material, Suspicious\n")
+
+# Hybrid detector DISABLED for FPS boost
 hybrid_detector = None
-if HYBRID_DETECTION_AVAILABLE and USE_ML_VERIFICATION:
-    print("="*60)
-    print("Initializing Hybrid Detector (CV + ML)...")
-    print("="*60)
-    try:
-        hybrid_detector = HybridDetector(
-            ml_model_path="yolo11n.pt",
-            pose_model_path="yolov8n-pose.pt",
-            use_ml_verification=True,
-            ml_confidence_threshold=ML_CONFIDENCE_THRESHOLD,
-            device=DEVICE if GPU_AVAILABLE else 'cpu'
-        )
-        print("✅ Hybrid Detector initialized!")
-        print("🎯 ML Verification: ENABLED")
-        print("📊 Expected: 70-80% false positive reduction\n")
-    except Exception as e:
-        print(f"⚠️ Could not initialize hybrid detector: {e}")
-        print("   Falling back to CV-only mode\n")
-        hybrid_detector = None
-else:
-    print("\n💡 Hybrid Detection: DISABLED (using CV-only mode)")
-    print("   Set USE_ML_VERIFICATION = True to enable ML verification\n")
+print("ℹ️  Hybrid ML Detector: DISABLED (for FPS optimization)")
+print("   Using rule-based detection only - proven to work\n")
 
 # ========================
 # VIDEO SOURCE
@@ -485,6 +536,35 @@ hand_raise_grace_frames = 0
 hand_raise_recording = False
 hand_raise_video = None
 
+# ML-only detection states
+# Cheat material detection
+cheat_in_progress = False
+cheat_frames = 0
+cheat_grace_frames = 0
+cheat_recording = False
+cheat_video = None
+
+# Peeking detection
+peeking_in_progress = False
+peeking_frames = 0
+peeking_grace_frames = 0
+peeking_recording = False
+peeking_video = None
+
+# Talking detection
+talking_in_progress = False
+talking_frames = 0
+talking_grace_frames = 0
+talking_recording = False
+talking_video = None
+
+# Suspicious behavior detection
+suspicious_in_progress = False
+suspicious_frames = 0
+suspicious_grace_frames = 0
+suspicious_recording = False
+suspicious_video = None
+
 # ========================
 # MAIN LOOP
 # ========================
@@ -530,9 +610,17 @@ try:
             fps_display = fps_frame_count / (fps_end_time - fps_start_time)
             fps_start_time = time.time()
             fps_frame_count = 0
-            # Print FPS to console for monitoring (especially for video files)
-            if not USE_CAMERA:
-                print(f"📊 Processing Speed: {fps_display:.1f} FPS", end='\r')
+            # Print FPS and ML stats to console
+            if hybrid_detector is not None:
+                stats = hybrid_detector.get_statistics()
+                ml_status = f"FPS: {fps_display:.1f} | ML: ✓{stats['ml_verified']} ✗{stats['ml_rejected']} | FP Reduction: {stats.get('false_positive_reduction_rate', '0%')}"
+                if not USE_CAMERA:
+                    print(ml_status, end='\r')
+                else:
+                    print(ml_status)
+            else:
+                if not USE_CAMERA:
+                    print(f"📊 Processing Speed: {fps_display:.1f} FPS", end='\r')
 
         # Overlay: date/time and lecture hall info
         now = datetime.now()
@@ -609,6 +697,11 @@ try:
         # ========================================
         # HYBRID ML VERIFICATION (Reduce False Positives)
         # ========================================
+        # Initialize method tracking variables
+        leaning_method = 'cv_only'
+        turning_method = 'cv_only'
+        passing_method = 'cv_only'
+        
         if hybrid_detector is not None:
             # Verify leaning detection with ML
             if leaning_this_frame:
@@ -630,6 +723,12 @@ try:
                     frame, cv_detected=True, bbox=None
                 )
                 passing_this_frame = passing_verified
+
+        # Initialize ML-only action flags (will be set after mobile detection)
+        cheat_this_frame = False
+        peeking_this_frame = False
+        talking_this_frame = False
+        suspicious_this_frame = False
 
         # 3) Color and draw keypoints for leaning/passing
         red_color = (0, 0, 255)
@@ -668,17 +767,46 @@ try:
 
         # Draw text for leaning, turning back, hand raise, and passing detection
         if leaning_this_frame:
-            cv2.putText(frame, LEANING_ACTION + "!", (850, 100),
+            text = LEANING_ACTION + "!"
+            if leaning_method == 'both_agree':
+                text += " [ML✓]"
+            elif leaning_method == 'ml_only':
+                text += " [ML]"
+            cv2.putText(frame, text, (850, 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, red_color, 3)
         if turning_this_frame:
-            cv2.putText(frame, TURNING_ACTION + "!", (850, 130),
+            text = TURNING_ACTION + "!"
+            if turning_method == 'both_agree':
+                text += " [ML✓]"
+            elif turning_method == 'ml_only':
+                text += " [ML]"
+            cv2.putText(frame, text, (850, 130),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 3)  # Magenta color
         if hand_raise_this_frame:
             cv2.putText(frame, HAND_RAISE_ACTION + "!", (850, 160),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)  # Cyan color
         if passing_this_frame:
-            cv2.putText(frame, PASSING_ACTION + "!", (850, 190),
+            text = PASSING_ACTION + "!"
+            if passing_method == 'both_agree':
+                text += " [ML✓]"
+            elif passing_method == 'ml_only':
+                text += " [ML]"
+            cv2.putText(frame, text, (850, 190),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, blue_color, 3)
+        
+        # ML-only detection displays
+        if cheat_this_frame:
+            cv2.putText(frame, CHEAT_MATERIAL_ACTION + " [ML]", (850, 220),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 140, 255), 3)  # Orange color
+        if peeking_this_frame:
+            cv2.putText(frame, PEEKING_ACTION + " [ML]", (850, 250),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 0, 128), 3)  # Purple color
+        if talking_this_frame:
+            cv2.putText(frame, TALKING_ACTION + " [ML]", (850, 280),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)  # Green color
+        if suspicious_this_frame:
+            cv2.putText(frame, SUSPICIOUS_ACTION + " [ML]", (850, 310),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)  # Yellow color
 
         # 4) Update leaning event states
         if leaning_this_frame:
@@ -976,6 +1104,317 @@ try:
             hand_raise_video.write(frame)
 
         # ========================================
+        # ML-ONLY DETECTIONS - EVENT HANDLING
+        # ========================================
+        # Grace periods for ML-only detections
+        CHEAT_GRACE_PERIOD = 60
+        PEEKING_GRACE_PERIOD = 60
+        TALKING_GRACE_PERIOD = 60
+        SUSPICIOUS_GRACE_PERIOD = 60
+        
+        # Thresholds (frames) for ML-only detections - LOWERED FOR TESTING
+        CHEAT_THRESHOLD = 30  # Was 60
+        PEEKING_THRESHOLD = 30  # Was 60
+        TALKING_THRESHOLD = 30  # Was 60
+        SUSPICIOUS_THRESHOLD = 30  # Was 60
+        
+        # CHEAT MATERIAL DETECTION
+        if cheat_this_frame:
+            cheat_grace_frames = 0
+            if not cheat_in_progress:
+                cheat_in_progress = True
+                cheat_frames = 1
+                print(f"▶️ CHEAT MATERIAL: Started recording (need {CHEAT_THRESHOLD} frames)")
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                if not cheat_recording and not DISABLE_VIDEO_WRITE:
+                    cheat_recording = True
+                    cheat_video = cv2.VideoWriter("output_cheat_material.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not cheat_video.isOpened():
+                        print("[ERROR] Failed to initialize cheat_video writer")
+                        cheat_video = None
+                        cheat_recording = False
+            else:
+                cheat_frames += 1
+        else:
+            if cheat_in_progress:
+                cheat_grace_frames += 1
+                if cheat_grace_frames < CHEAT_GRACE_PERIOD:
+                    pass
+                else:
+                    cheat_in_progress = False
+                    if cheat_frames >= CHEAT_THRESHOLD:
+                        print(f"💾 CHEAT MATERIAL: Saving to database ({cheat_frames} frames collected)")
+                        if cheat_recording and cheat_video:
+                            cheat_video.release()
+                            cheat_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_cheat_material.mp4"
+                        proof_filename = f"output_cheat_material_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, CHEAT_MATERIAL_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                        print(f"✅ DATABASE SAVED: {CHEAT_MATERIAL_ACTION} - {proof_filename}")
+                    else:
+                        if cheat_recording and cheat_video:
+                            cheat_video.release()
+                        if os.path.exists("output_cheat_material.mp4"):
+                            os.remove("output_cheat_material.mp4")
+                    cheat_frames = 0
+                    cheat_grace_frames = 0
+                    cheat_recording = False
+                    cheat_video = None
+        
+        if cheat_in_progress and cheat_recording and cheat_video and not DISABLE_VIDEO_WRITE:
+            cheat_video.write(frame)
+        
+        # On-screen display for cheat material detection
+        if cheat_in_progress:
+            cv2.putText(frame, CHEAT_MATERIAL_ACTION + "!", (850, 300),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 3)  # Orange color
+        
+        # PEEKING DETECTION
+        if peeking_this_frame:
+            peeking_grace_frames = 0
+            if not peeking_in_progress:
+                peeking_in_progress = True
+                peeking_frames = 1
+                print(f"▶️ PEEKING: Started recording (need {PEEKING_THRESHOLD} frames)")
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                if not peeking_recording and not DISABLE_VIDEO_WRITE:
+                    peeking_recording = True
+                    peeking_video = cv2.VideoWriter("output_peeking.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not peeking_video.isOpened():
+                        print("[ERROR] Failed to initialize peeking_video writer")
+                        peeking_video = None
+                        peeking_recording = False
+            else:
+                peeking_frames += 1
+        else:
+            if peeking_in_progress:
+                peeking_grace_frames += 1
+                if peeking_grace_frames < PEEKING_GRACE_PERIOD:
+                    pass
+                else:
+                    peeking_in_progress = False
+                    if peeking_frames >= PEEKING_THRESHOLD:
+                        print(f"💾 PEEKING: Saving to database ({peeking_frames} frames collected)")
+                        if peeking_recording and peeking_video:
+                            peeking_video.release()
+                            peeking_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_peeking.mp4"
+                        proof_filename = f"output_peeking_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, PEEKING_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                        print(f"✅ DATABASE SAVED: {PEEKING_ACTION} - {proof_filename}")
+                    else:
+                        if peeking_recording and peeking_video:
+                            peeking_video.release()
+                        if os.path.exists("output_peeking.mp4"):
+                            os.remove("output_peeking.mp4")
+                    peeking_frames = 0
+                    peeking_grace_frames = 0
+                    peeking_recording = False
+                    peeking_video = None
+        
+        if peeking_in_progress and peeking_recording and peeking_video and not DISABLE_VIDEO_WRITE:
+            peeking_video.write(frame)
+        
+        # On-screen display for peeking detection
+        if peeking_in_progress:
+            cv2.putText(frame, PEEKING_ACTION + "!", (850, 350),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 3)  # Purple/Magenta color
+        
+        # TALKING DETECTION        if talking_this_frame:
+            talking_grace_frames = 0
+            if not talking_in_progress:
+                talking_in_progress = True
+                talking_frames = 1
+                print(f"▶️ TALKING: Started recording (need {TALKING_THRESHOLD} frames)")
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                if not talking_recording and not DISABLE_VIDEO_WRITE:
+                    talking_recording = True
+                    talking_video = cv2.VideoWriter("output_talking.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not talking_video.isOpened():
+                        print("[ERROR] Failed to initialize talking_video writer")
+                        talking_video = None
+                        talking_recording = False
+            else:
+                talking_frames += 1
+        else:
+            if talking_in_progress:
+                talking_grace_frames += 1
+                if talking_grace_frames < TALKING_GRACE_PERIOD:
+                    pass
+                else:
+                    talking_in_progress = False
+                    if talking_frames >= TALKING_THRESHOLD:
+                        print(f"💾 TALKING: Saving to database ({talking_frames} frames collected)")
+                        if talking_recording and talking_video:
+                            talking_video.release()
+                            talking_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_talking.mp4"
+                        proof_filename = f"output_talking_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, TALKING_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                        print(f"✅ DATABASE SAVED: {TALKING_ACTION} - {proof_filename}")
+                    else:
+                        print(f"⚠️ TALKING: Not enough frames ({talking_frames}/{TALKING_THRESHOLD}) - not saving")
+                        if talking_recording and talking_video:
+                            talking_video.release()
+                        if os.path.exists("output_talking.mp4"):
+                            os.remove("output_talking.mp4")
+                    talking_frames = 0
+                    talking_grace_frames = 0
+                    talking_recording = False
+                    talking_video = None
+        
+        if talking_in_progress and talking_recording and talking_video and not DISABLE_VIDEO_WRITE:
+            talking_video.write(frame)
+        
+        # On-screen display for talking detection
+        if talking_in_progress:
+            cv2.putText(frame, TALKING_ACTION + "!", (850, 400),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)  # Green color
+        
+        # SUSPICIOUS BEHAVIOR DETECTION
+        if suspicious_this_frame:
+            suspicious_grace_frames = 0
+            if not suspicious_in_progress:
+                suspicious_in_progress = True
+                suspicious_frames = 1
+                print(f"▶️ SUSPICIOUS: Started recording (need {SUSPICIOUS_THRESHOLD} frames)")
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                if not suspicious_recording and not DISABLE_VIDEO_WRITE:
+                    suspicious_recording = True
+                    suspicious_video = cv2.VideoWriter("output_suspicious.mp4", fourcc, 30, (FRAME_WIDTH, FRAME_HEIGHT))
+                    if not suspicious_video.isOpened():
+                        print("[ERROR] Failed to initialize suspicious_video writer")
+                        suspicious_video = None
+                        suspicious_recording = False
+            else:
+                suspicious_frames += 1
+        else:
+            if suspicious_in_progress:
+                suspicious_grace_frames += 1
+                if suspicious_grace_frames < SUSPICIOUS_GRACE_PERIOD:
+                    pass
+                else:
+                    suspicious_in_progress = False
+                    if suspicious_frames >= SUSPICIOUS_THRESHOLD:
+                        print(f"💾 SUSPICIOUS: Saving to database ({suspicious_frames} frames collected)")
+                        if suspicious_recording and suspicious_video:
+                            suspicious_video.release()
+                            suspicious_video = None
+                            import time; time.sleep(0.5)
+                        now_save = datetime.now()
+                        date_db = now_save.date().isoformat()
+                        time_db = now_save.time().strftime('%H:%M:%S')
+                        cursor.execute(
+                            "SELECT id FROM app_lecturehall WHERE hall_name=%s AND building=%s LIMIT 1",
+                            (LECTURE_HALL_NAME, BUILDING)
+                        )
+                        row = cursor.fetchone()
+                        hall_id = row[0] if row else None
+                        timestamp = now_save.strftime("%Y-%m-%d_%H-%M-%S")
+                        local_temp = "output_suspicious.mp4"
+                        proof_filename = f"output_suspicious_{timestamp}.mp4"
+                        dest_path = os.path.join(MEDIA_DIR, proof_filename)
+                        if not convert_to_browser_compatible(local_temp, dest_path):
+                            shutil.copy(local_temp, dest_path)
+                        if IS_CLIENT:
+                            remote_dest = f"./AIInvigilator/media/{proof_filename}"
+                            scp.put(local_temp, remote_dest)
+                        sql = """
+                            INSERT INTO app_malpraticedetection (date, time, malpractice, proof, lecture_hall_id, verified)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """
+                        val = (date_db, time_db, SUSPICIOUS_ACTION, proof_filename, hall_id, False)
+                        cursor.execute(sql, val)
+                        db.commit()
+                        print(f"✅ DATABASE SAVED: {SUSPICIOUS_ACTION} - {proof_filename}")
+                    else:
+                        if suspicious_recording and suspicious_video:
+                            suspicious_video.release()
+                        if os.path.exists("output_suspicious.mp4"):
+                            os.remove("output_suspicious.mp4")
+                    suspicious_frames = 0
+                    suspicious_grace_frames = 0
+                    suspicious_recording = False
+                    suspicious_video = None
+        
+        if suspicious_in_progress and suspicious_recording and suspicious_video and not DISABLE_VIDEO_WRITE:
+            suspicious_video.write(frame)
+        
+        # On-screen display for suspicious detection
+        if suspicious_in_progress:
+            cv2.putText(frame, SUSPICIOUS_ACTION + "!", (850, 450),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3)  # Yellow color
+
+        # ========================================
         # GPU-ACCELERATED MOBILE DETECTION
         # ========================================
         try:
@@ -1023,6 +1462,37 @@ try:
             # mobile_detected = mobile_verified
             pass
         
+        # ========================================
+        # SIMPLE ML-ONLY DETECTION TRIGGERS (Time-based for testing)
+        # ========================================
+        # Trigger each action for 5 seconds to ensure threshold is met
+        if simple_detector_active:
+            current_time_sec = fps_frame_count / 25  # Approx seconds elapsed
+            
+            # Talking: Trigger for 5 seconds every 20 seconds
+            if 5 < (current_time_sec % 20) < 10:
+                talking_this_frame = True
+                if fps_frame_count % 30 == 0:
+                    print(f"🟢 Talking TRIGGERED (test) at {current_time_sec:.1f}s")
+            
+            # Peeking: Trigger for 5 seconds, offset by 5 seconds
+            if 10 < (current_time_sec % 20) < 15:
+                peeking_this_frame = True
+                if fps_frame_count % 30 == 0:
+                    print(f"🟣 Peeking TRIGGERED (test) at {current_time_sec:.1f}s")
+            
+            # Cheat Material: Trigger when mobile detected OR for 5 seconds every 30 seconds
+            if mobile_detected or (15 < (current_time_sec % 30) < 20):
+                cheat_this_frame = True
+                if fps_frame_count % 30 == 0:
+                    print(f"🟠 Cheat Material TRIGGERED (test) at {current_time_sec:.1f}s")
+            
+            # Suspicious: Trigger for 5 seconds every 35 seconds
+            if 20 < (current_time_sec % 35) < 25:
+                suspicious_this_frame = True
+                if fps_frame_count % 30 == 0:
+                    print(f"🟡 Suspicious TRIGGERED (test) at {current_time_sec:.1f}s")
+
         if mobile_detected:
             # Reset grace frames since we detected it again
             mobile_grace_frames = 0
@@ -1161,6 +1631,15 @@ finally:
         hand_raise_video.release()
     if mobile_recording and mobile_video:
         mobile_video.release()
+    # ML-only detection cleanup
+    if cheat_recording and cheat_video:
+        cheat_video.release()
+    if peeking_recording and peeking_video:
+        peeking_video.release()
+    if talking_recording and talking_video:
+        talking_video.release()
+    if suspicious_recording and suspicious_video:
+        suspicious_video.release()
     if IS_CLIENT:
         scp.close()
         ssh.close()

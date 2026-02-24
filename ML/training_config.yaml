@@ -1,0 +1,63 @@
+# Training Configuration for AI Invigilator Custom Model
+# Optimized for RTX 3050 6GB VRAM
+
+# Model Configuration
+model: yolo11n.pt  # Starting model (nano - fastest for 6GB VRAM)
+
+# Dataset Configuration
+data: e:/witcher/AIINVIGILATOR/Dataset/custom_filtered_dataset/data.yaml
+
+# Training Hyperparameters
+epochs: 25  # Max epochs (smart stopping will stop earlier when peak reached)
+imgsz: 640
+batch: 16  # Balanced for 6GB GPU + limited RAM
+patience: 10  # Early stopping if no improvement (managed by smart script)
+
+# Device Configuration
+device: 0  # 0 for GPU, 'cpu' for CPU
+
+# Output Configuration
+project: runs/train
+name: malpractice_detector
+exist_ok: true
+
+# Checkpointing
+save_period: 5  # Save checkpoint every 5 epochs
+save: true
+
+# Performance Optimization
+close_mosaic: 5  # Disable mosaic augmentation in last N epochs for better mAP
+
+# Visualization
+plots: true
+verbose: true
+
+# Advanced Options (uncomment to use)
+workers: 1  # Number of data loader workers (reduced for limited RAM)
+amp: true  # Automatic Mixed Precision - 2x faster training
+cache: false  # Disable cache - insufficient RAM (only 3.2GB free)
+val: true  # Enable validation
+# optimizer: 'Adam'  # SGD, Adam, AdamW
+# lr0: 0.01  # Initial learning rate
+# weight_decay: 0.0005  # Weight decay
+# warmup_epochs: 3  # Warmup epochs
+# mosaic: 1.0  # Mosaic augmentation
+# mixup: 0.0  # Mixup augmentation
+# copy_paste: 0.0  # Copy-paste augmentation
+# degrees: 0.0  # Image rotation (+/- deg)
+# translate: 0.1  # Image translation (+/- fraction)
+# scale: 0.5  # Image scale (+/- gain)
+# shear: 0.0  # Image shear (+/- deg)
+# perspective: 0.0  # Image perspective (+/- fraction)
+# flipud: 0.0  # Image flip up-down (probability)
+# fliplr: 0.5  # Image flip left-right (probability)
+# hsv_h: 0.015  # Image HSV-Hue augmentation (fraction)
+# hsv_s: 0.7  # Image HSV-Saturation augmentation (fraction)
+# hsv_v: 0.4  # Image HSV-Value augmentation (fraction)
+
+# Notes:
+# - For RTX 3050 6GB: Use batch=16 with imgsz=640
+# - If out of memory: Reduce batch to 8 or 12
+# - For faster training: Use yolo11n.pt (nano model)
+# - For better accuracy: Use yolo11s.pt or yolo11m.pt (requires more VRAM)
+# - Auto-resume is enabled by default in train_with_checkpointing.py
