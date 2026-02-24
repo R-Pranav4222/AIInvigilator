@@ -1088,24 +1088,12 @@ label { color: var(--text-secondary) !important; font-weight: 500; }
 }
 
 /* ===== GSAP ANIMATION CLASSES ===== */
-.reveal-up {
-  opacity: 0;
-  transform: translateY(40px);
-}
-
-.reveal-left {
-  opacity: 0;
-  transform: translateX(-40px);
-}
-
-.reveal-right {
-  opacity: 0;
-  transform: translateX(40px);
-}
-
+/* Initial states handled by GSAP from() — do NOT set opacity:0 here */
+.reveal-up,
+.reveal-left,
+.reveal-right,
 .reveal-scale {
-  opacity: 0;
-  transform: scale(0.9);
+  will-change: opacity, transform;
 }
 
 /* ===== UTILITY ===== */

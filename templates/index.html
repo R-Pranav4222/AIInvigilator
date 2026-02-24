@@ -10,18 +10,18 @@
     <div class="container" style="position:relative; z-index:2;">
       <div class="row align-items-center min-vh-75">
         <div class="col-lg-7">
-          <div class="hero-badge reveal-up">
+          <div class="hero-badge">
             <i class="fas fa-bolt"></i> AI-Powered Surveillance
           </div>
-          <h1 class="hero-title reveal-up">
+          <h1 class="hero-title">
             Exam Integrity,<br>
             <span class="gradient-text">Reimagined.</span>
           </h1>
-          <p class="hero-subtitle reveal-up">
+          <p class="hero-subtitle">
             Real-time malpractice detection powered by computer vision, deep learning, 
             and intelligent behavioral analysis — protecting academic honesty at scale.
           </p>
-          <div class="hero-actions reveal-up">
+          <div class="hero-actions">
             {% if request.user.is_authenticated %}
             <a href="{% url 'malpractice_log' %}" class="btn btn-accent btn-lg mr-3">
               <i class="fas fa-chart-line" style="margin-right:6px;"></i> View Dashboard
@@ -40,7 +40,7 @@
           </div>
         </div>
         <div class="col-lg-5 d-none d-lg-block">
-          <div class="hero-visual reveal-scale">
+          <div class="hero-visual">
             <div class="hero-visual-inner">
               <div class="hero-ring ring-1"></div>
               <div class="hero-ring ring-2"></div>
@@ -268,46 +268,60 @@ document.addEventListener('DOMContentLoaded', function() {
   if (typeof gsap !== 'undefined' && typeof ScrollTrigger !== 'undefined') {
     gsap.registerPlugin(ScrollTrigger);
     
-    // Reveal animations
+    // Scroll-triggered reveal animations using fromTo() for reliable hide→show
     gsap.utils.toArray('.reveal-up').forEach(function(el, i) {
-      gsap.from(el, {
-        scrollTrigger: { trigger: el, start: 'top 88%', toggleActions: 'play none none none' },
-        y: 60, opacity: 0, duration: 0.8, delay: i % 3 * 0.15, ease: 'power3.out'
-      });
+      gsap.fromTo(el,
+        { y: 50, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.8, delay: i % 3 * 0.12, ease: 'power3.out',
+          scrollTrigger: { trigger: el, start: 'top 90%', toggleActions: 'play none none none' }
+        }
+      );
     });
     
     gsap.utils.toArray('.reveal-left').forEach(function(el) {
-      gsap.from(el, {
-        scrollTrigger: { trigger: el, start: 'top 85%' },
-        x: -80, opacity: 0, duration: 1, ease: 'power3.out'
-      });
+      gsap.fromTo(el,
+        { x: -60, opacity: 0 },
+        { x: 0, opacity: 1, duration: 1, ease: 'power3.out',
+          scrollTrigger: { trigger: el, start: 'top 88%' }
+        }
+      );
     });
     
     gsap.utils.toArray('.reveal-right').forEach(function(el) {
-      gsap.from(el, {
-        scrollTrigger: { trigger: el, start: 'top 85%' },
-        x: 80, opacity: 0, duration: 1, ease: 'power3.out'
-      });
+      gsap.fromTo(el,
+        { x: 60, opacity: 0 },
+        { x: 0, opacity: 1, duration: 1, ease: 'power3.out',
+          scrollTrigger: { trigger: el, start: 'top 88%' }
+        }
+      );
     });
     
     gsap.utils.toArray('.reveal-scale').forEach(function(el) {
-      gsap.from(el, {
-        scrollTrigger: { trigger: el, start: 'top 85%' },
-        scale: 0.85, opacity: 0, duration: 1, ease: 'power3.out'
-      });
+      gsap.fromTo(el,
+        { scale: 0.85, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 1, ease: 'power3.out',
+          scrollTrigger: { trigger: el, start: 'top 88%' }
+        }
+      );
     });
 
-    // Hero entrance
-    gsap.from('.hero-title', { y: 40, opacity: 0, duration: 1, delay: 0.2, ease: 'power3.out' });
-    gsap.from('.hero-subtitle', { y: 40, opacity: 0, duration: 1, delay: 0.4, ease: 'power3.out' });
-    gsap.from('.hero-actions', { y: 40, opacity: 0, duration: 1, delay: 0.6, ease: 'power3.out' });
+    // Hero entrance — direct animations (no ScrollTrigger)
     gsap.from('.hero-badge', { y: 20, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out' });
+    gsap.from('.hero-title', { y: 40, opacity: 0, duration: 1, delay: 0.3, ease: 'power3.out' });
+    gsap.from('.hero-subtitle', { y: 30, opacity: 0, duration: 1, delay: 0.5, ease: 'power3.out' });
+    gsap.from('.hero-actions', { y: 30, opacity: 0, duration: 1, delay: 0.7, ease: 'power3.out' });
     gsap.from('.hero-visual', { scale: 0.8, opacity: 0, duration: 1.2, delay: 0.5, ease: 'elastic.out(1,0.5)' });
 
     // Rotating rings
     gsap.to('.ring-1', { rotation: 360, duration: 20, repeat: -1, ease: 'none' });
     gsap.to('.ring-2', { rotation: -360, duration: 30, repeat: -1, ease: 'none' });
     gsap.to('.ring-3', { rotation: 360, duration: 40, repeat: -1, ease: 'none' });
+  } else {
+    // Fallback: if GSAP fails to load, make everything visible
+    document.querySelectorAll('.reveal-up,.reveal-left,.reveal-right,.reveal-scale').forEach(function(el) {
+      el.style.opacity = '1';
+      el.style.transform = 'none';
+    });
   }
 });
 </script>
