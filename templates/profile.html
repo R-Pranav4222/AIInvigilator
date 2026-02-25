@@ -123,7 +123,15 @@
                 </tr>
                 <tr>
                   <th>Email:</th>
-                  <td>{{ request.user.email }}</td>
+                  <td>
+                    {% if request.user.email %}
+                      {{ request.user.email }}
+                      <span style="color:var(--success); font-size:0.75rem; margin-left:8px;"><i class="fas fa-check-circle"></i> Notifications will be sent here</span>
+                    {% else %}
+                      <span style="color:var(--danger); font-weight:600;">Not set</span>
+                      <span style="color:var(--danger); font-size:0.75rem; margin-left:8px;"><i class="fas fa-exclamation-triangle"></i> Add your email in Edit Profile to receive malpractice alerts</span>
+                    {% endif %}
+                  </td>
                 </tr>
                 <tr>
                   <th>First Name:</th>
@@ -140,7 +148,11 @@
                 {% if not request.user.is_superuser %}
                   <tr>
                     <th>Phone:</th>
-                    <td>{{ request.user.teacherprofile.phone }}</td>
+                    <td>{{ request.user.teacherprofile.phone|default:"Not set" }}</td>
+                  </tr>
+                  <tr>
+                    <th>Lecture Hall:</th>
+                    <td>{{ request.user.teacherprofile.lecture_hall|default:"Not assigned" }}</td>
                   </tr>
                 {% endif %}
               </tbody>
