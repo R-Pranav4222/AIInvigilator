@@ -26,9 +26,15 @@
             <a href="{% url 'malpractice_log' %}" class="btn btn-accent btn-lg mr-3">
               <i class="fas fa-chart-line" style="margin-right:6px;"></i> View Dashboard
             </a>
+            {% if request.user.is_superuser %}
             <a href="{% url 'run_cameras_page' %}" class="btn btn-accent-outline btn-lg">
               <i class="fas fa-video" style="margin-right:6px;"></i> Start Monitoring
             </a>
+            {% else %}
+            <a href="{% url 'teacher_cameras_page' %}" class="btn btn-accent-outline btn-lg">
+              <i class="fas fa-video" style="margin-right:6px;"></i> Start Monitoring
+            </a>
+            {% endif %}
             {% else %}
             <a href="{% url 'login' %}" class="btn btn-accent btn-lg mr-3">
               <i class="fas fa-right-to-bracket" style="margin-right:6px;"></i> Get Started
@@ -52,9 +58,6 @@
           </div>
         </div>
       </div>
-    </div>
-    <div class="hero-scroll-indicator">
-      <div class="scroll-line"></div>
     </div>
   </section>
 
@@ -247,9 +250,15 @@
         <h2>Ready to Secure Your Exams?</h2>
         <p>Deploy AI-powered surveillance and protect academic integrity with intelligent detection.</p>
         {% if request.user.is_authenticated %}
+        {% if request.user.is_superuser %}
         <a href="{% url 'run_cameras_page' %}" class="btn btn-accent btn-lg">
           <i class="fas fa-play" style="margin-right:6px;"></i> Start Monitoring Now
         </a>
+        {% else %}
+        <a href="{% url 'teacher_cameras_page' %}" class="btn btn-accent btn-lg">
+          <i class="fas fa-play" style="margin-right:6px;"></i> Start Monitoring Now
+        </a>
+        {% endif %}
         {% else %}
         <a href="{% url 'teacher_register' %}" class="btn btn-accent btn-lg">
           <i class="fas fa-user-plus" style="margin-right:6px;"></i> Create Account

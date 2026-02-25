@@ -217,10 +217,10 @@ label { color: var(--text-secondary) !important; font-weight: 500; }
   font-weight: 800;
   letter-spacing: -0.02em;
   margin: 0;
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  background: var(--accent-gradient) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
 }
 
 .navbar-dark-theme .nav-link {
