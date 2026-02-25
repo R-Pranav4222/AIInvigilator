@@ -337,7 +337,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
     @database_sync_to_async
     def get_online_teachers(self):
         profiles = TeacherProfile.objects.filter(
-            is_online=True
+            is_online=True, user__is_superuser=False
         ).select_related('user', 'lecture_hall')
         return [
             {
@@ -354,7 +354,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def get_all_teachers(self):
-        profiles = TeacherProfile.objects.all().select_related('user', 'lecture_hall')
+        profiles = TeacherProfile.objects.filter(user__is_superuser=False).select_related('user', 'lecture_hall')
         return [
             {
                 'id': p.user.id,

@@ -175,8 +175,11 @@ def profile_view(request):
 def edit_profile(request):
     """Allow user to edit basic info (User) + teacher-specific info (TeacherProfile)."""
     user = request.user
-    # Attempt to fetch or create the TeacherProfile:
-    teacher_profile, _ = TeacherProfile.objects.get_or_create(user=user)
+    # Only create TeacherProfile for non-admin users
+    if user.is_superuser:
+        teacher_profile = TeacherProfile.objects.filter(user=user).first()
+    else:
+        teacher_profile, _ = TeacherProfile.objects.get_or_create(user=user)
 
     if request.method == 'POST':
         user_form = EditProfileForm(request.POST, instance=user)
