@@ -599,15 +599,30 @@
               {% endif %}
             </td>
             <td>
-              <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#videoModal"
-                onclick="playVideo('{{ i.proof }}')">
-                View
-              </button>
+              {% if i.proof %}
+                {% if i.proof|slice:"-4:" == ".jpg" or i.proof|slice:"-4:" == ".png" or i.proof|slice:"-5:" == ".jpeg" %}
+                <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#proofModal"
+                  onclick="viewProofImage('/media/{{ i.proof }}')">
+                  <i class="fas fa-image" style="margin-right:4px;"></i> View
+                </button>
+                {% else %}
+                <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#videoModal"
+                  onclick="playVideo('{{ i.proof }}')">
+                  <i class="fas fa-play" style="margin-right:4px;"></i> View
+                </button>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">No proof</span>
+              {% endif %}
             </td>
             <td>
+              {% if i.proof %}
               <a href="/media/{{ i.proof }}" download class="btn btn-primary btn-download">
                 Download
               </a>
+              {% else %}
+              <span class="text-muted">-</span>
+              {% endif %}
             </td>
             <td>
               <button type="button" class="btn btn-delete" onclick="deleteMalpractice({{ i.id }})">
@@ -673,6 +688,24 @@
           Your browser does not support the video tag.
         </video>
         <div id="videoError" class="text-danger mt-2" style="display: none;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for Proof Image (live detection snapshots) -->
+<div class="modal fade" id="proofModal" tabindex="-1" role="dialog" aria-labelledby="proofModalLabel"
+  aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);">
+        <h5 class="modal-title" id="proofModalLabel"><i class="fas fa-camera" style="margin-right:6px;color:var(--accent-cyan);"></i>Detection Snapshot</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body text-center">
+        <img id="proofImage" src="" alt="Detection Proof" style="width:100%; border-radius:8px;">
       </div>
     </div>
   </div>
@@ -804,6 +837,12 @@
     }
   });
 
+
+  // VIEW PROOF IMAGE (live detection snapshots)
+  function viewProofImage(imageUrl) {
+    const proofImg = document.getElementById('proofImage');
+    proofImg.src = imageUrl;
+  }
 
   // VIEW VIDEO
   function playVideo(videoUrl) {

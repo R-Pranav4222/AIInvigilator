@@ -533,8 +533,9 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
     Handles teacher webcam streaming:
     - Teacher sends JPEG frames from browser webcam
     - Server processes frames with ML detection
-    - Annotated frames + detections sent back to teacher
+    - Only ML-annotated frames sent back to teacher (teacher shows raw webcam locally)
     - Raw frames forwarded to admin grid
+    - Uses frame-dropping: only the LATEST frame is processed (no queue buildup)
     """
 
     async def connect(self):
@@ -568,7 +569,12 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         # Initialize frame processor (lazy load)
         self.frame_processor = None
         self.frame_count = 0
+        self.admin_frame_count = 0
         self.detection_active = True
+
+        # Frame-dropping: latest frame buffer + ML busy flag
+        self._latest_frame = None
+        self._ml_busy = False
 
         # Notify admin that stream started
         await self.channel_layer.group_send(
@@ -612,11 +618,15 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 self.detection_active = False
 
     async def process_frame(self, frame_bytes):
-        """Process a webcam frame through ML pipeline"""
+        """Process a webcam frame — frame-dropping architecture for zero lag"""
         self.frame_count += 1
 
-        # Forward frame to admin grid (every 2nd frame = ~15fps for smooth admin view)
-        if self.frame_count % 2 == 0:
+        # Always store the latest frame (overwrites previous, no queue)
+        self._latest_frame = frame_bytes
+
+        # Forward frame to admin grid (every 3rd frame = ~10fps for smooth admin view)
+        self.admin_frame_count += 1
+        if self.admin_frame_count % 3 == 0:
             raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
             await self.channel_layer.group_send(
                 'admin_camera_grid',
@@ -629,47 +639,69 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 }
             )
 
-        # ML processing every 3rd frame (~10fps ML, matches original performance)
-        if self.detection_active and self.frame_count % 3 == 0:
-            try:
-                # Lazy init frame processor
-                if self.frame_processor is None:
-                    self.frame_processor = await self.init_frame_processor()
+        # ML processing: only if not already busy (frame-dropping)
+        # This ensures we always process the LATEST frame, never a stale queued one
+        if self.detection_active and not self._ml_busy:
+            self._ml_busy = True
+            asyncio.ensure_future(self._run_ml_processing())
 
-                if self.frame_processor:
-                    # Process in thread pool to not block event loop
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(
-                        ml_executor,
-                        self.frame_processor.process_frame,
-                        frame_bytes
-                    )
+    async def _run_ml_processing(self):
+        """Run ML on the latest frame, drop stale frames"""
+        try:
+            # Lazy init frame processor
+            if self.frame_processor is None:
+                self.frame_processor = await self.init_frame_processor()
 
-                    if result:
-                        # Send annotated frame back to teacher
-                        await self.send(bytes_data=result['annotated_frame'])
+            if not self.frame_processor:
+                self._ml_busy = False
+                return
 
-                        # If malpractice detected, save and notify
-                        if result.get('detections'):
-                            for detection in result['detections']:
-                                saved = await self.save_detection(detection)
-                                if saved:
-                                    # Notify admin in real-time
-                                    await self.channel_layer.group_send(
-                                        'admin_notifications',
-                                        {
-                                            'type': 'malpractice.alert',
-                                            'detection': saved,
-                                        }
-                                    )
-                    return
-            except Exception as e:
-                logger.error(f"ML processing error: {e}")
+            # Grab the LATEST frame (may be newer than when we were called)
+            frame_bytes = self._latest_frame
+            if frame_bytes is None:
+                self._ml_busy = False
+                return
 
-        # If no ML processing this frame, just echo back the raw frame
-        # so teacher always has a live view
-        if self.frame_count % 3 != 0:
-            await self.send(bytes_data=frame_bytes)
+            # Process in thread pool to not block event loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                ml_executor,
+                self.frame_processor.process_frame,
+                frame_bytes
+            )
+
+            if result:
+                # Send annotated frame back to teacher
+                await self.send(bytes_data=result['annotated_frame'])
+
+                # If malpractice detected, save snapshot + notify
+                if result.get('detections'):
+                    for detection in result['detections']:
+                        # Save annotated frame as proof snapshot
+                        proof_filename = await self.save_proof_snapshot(
+                            result['annotated_frame'], detection.get('action', 'Unknown')
+                        )
+                        detection['proof'] = proof_filename
+                        saved = await self.save_detection(detection)
+                        if saved:
+                            # Send detection info to teacher as JSON
+                            await self.send(text_data=json.dumps({
+                                'type': 'detection',
+                                'action': detection.get('action', ''),
+                                'probability': detection.get('probability', 0),
+                            }))
+                            # Notify admin in real-time
+                            await self.channel_layer.group_send(
+                                'admin_notifications',
+                                {
+                                    'type': 'malpractice.alert',
+                                    'detection': saved,
+                                }
+                            )
+        except Exception as e:
+            logger.error(f"ML processing error: {e}")
+        finally:
+            self._ml_busy = False
 
     async def init_frame_processor(self):
         """Initialize ML frame processor"""
@@ -691,6 +723,29 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Failed to init frame processor: {e}")
             return None
+
+    @database_sync_to_async
+    def save_proof_snapshot(self, annotated_bytes, action_name):
+        """Save the annotated frame as a JPEG proof snapshot"""
+        try:
+            import os
+            from django.conf import settings
+            proof_dir = os.path.join(settings.MEDIA_ROOT, 'live_proofs')
+            os.makedirs(proof_dir, exist_ok=True)
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            safe_action = action_name.replace(' ', '_').lower()
+            filename = f'live_{self.teacher_id}_{safe_action}_{timestamp}.jpg'
+            filepath = os.path.join(proof_dir, filename)
+
+            with open(filepath, 'wb') as f:
+                f.write(annotated_bytes)
+
+            # Return relative path for storage in DB (relative to MEDIA_ROOT)
+            return f'live_proofs/{filename}'
+        except Exception as e:
+            logger.error(f"Failed to save proof snapshot: {e}")
+            return ''
 
     @database_sync_to_async
     def get_active_session(self):

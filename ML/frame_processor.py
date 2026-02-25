@@ -282,13 +282,6 @@ class FrameProcessor:
                         # Draw person bounding box
                         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-            # Draw keypoints on annotated frame
-            for kp in all_keypoints:
-                for point in kp[:17]:
-                    x, y = int(point[0]), int(point[1])
-                    if x > 0 and y > 0:
-                        cv2.circle(annotated, (x, y), 3, (0, 255, 255), -1)
-
             # ---- Per-person behavior detection ----
             leaning_detected = False
             turning_detected = False
@@ -326,11 +319,62 @@ class FrameProcessor:
                             # or wider than tall for horizontal hold (aspect < 0.7)
                             if 0.3 < aspect < 3.0:
                                 mobile_detected = True
-                                # Draw mobile detection
-                                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                                cv2.putText(annotated, f"PHONE {conf:.0%}",
-                                            (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.7, (0, 0, 255), 2)
+                                # Draw mobile detection with thick orange box
+                                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 3)
+                                label = f"PHONE {conf:.0%}"
+                                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                                cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw, y1), (0, 165, 255), -1)
+                                cv2.putText(annotated, label,
+                                            (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX,
+                                            0.8, (255, 255, 255), 2)
+
+            # ---- Draw skeleton keypoints and limb connections ----
+            # COCO skeleton connection pairs (index pairs for drawing lines)
+            SKELETON_PAIRS = [
+                (0, 1), (0, 2), (1, 3), (2, 4),       # head
+                (5, 6),                                  # shoulders
+                (5, 7), (7, 9),                          # left arm
+                (6, 8), (8, 10),                         # right arm
+                (5, 11), (6, 12),                        # torso
+                (11, 12),                                # hips
+                (11, 13), (13, 15),                      # left leg
+                (12, 14), (14, 16),                      # right leg
+            ]
+
+            # Color scheme: green=normal, red=leaning, cyan=hand raised, magenta=turning
+            for person_idx, kp in enumerate(all_keypoints):
+                person_leaning = is_leaning(kp)
+                person_turning = is_turning_back(kp)
+                person_hand_raised = is_hand_raised(kp)
+
+                # Choose color based on detected action
+                if person_leaning:
+                    color = (0, 0, 255)       # Red
+                elif person_turning:
+                    color = (255, 0, 255)     # Magenta
+                elif person_hand_raised:
+                    color = (0, 255, 255)     # Cyan
+                else:
+                    color = (0, 255, 0)       # Green (normal)
+
+                # Draw skeleton limb connections
+                for (i, j) in SKELETON_PAIRS:
+                    if i < len(kp) and j < len(kp):
+                        x1, y1 = int(kp[i][0]), int(kp[i][1])
+                        x2, y2 = int(kp[j][0]), int(kp[j][1])
+                        if x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:
+                            cv2.line(annotated, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+
+                # Draw keypoint circles (larger, colored)
+                for idx, point in enumerate(kp[:17]):
+                    x, y = int(point[0]), int(point[1])
+                    if x > 0 and y > 0:
+                        # Wrists get special treatment for passing paper
+                        if idx in (9, 10) and passing_detected:
+                            cv2.circle(annotated, (x, y), 6, (255, 0, 0), -1)  # Blue for passing
+                            cv2.circle(annotated, (x, y), 8, (255, 0, 0), 2)
+                        else:
+                            cv2.circle(annotated, (x, y), 5, color, -1)
 
             # ---- Update consecutive frame counters ----
             self.leaning_frames = self.leaning_frames + 1 if leaning_detected else 0
@@ -387,38 +431,50 @@ class FrameProcessor:
                     })
                     self.mobile_frames = 0
 
-            # ---- Draw status overlay ----
-            status_text = []
+            # ---- Draw status overlay with background boxes ----
+            h_frame, w_frame = annotated.shape[:2]
+
+            # Detection action flags (top-left, with colored background)
+            action_labels = []
             if leaning_detected:
-                status_text.append(f"LEANING ({self.leaning_frames})")
+                action_labels.append((f"LEANING ({self.leaning_frames})", (0, 0, 255)))
             if turning_detected:
-                status_text.append(f"TURNING BACK ({self.turning_frames})")
+                action_labels.append((f"TURNING BACK ({self.turning_frames})", (255, 0, 255)))
             if hand_raise_detected:
-                status_text.append(f"HAND RAISED ({self.hand_raise_frames})")
+                action_labels.append((f"HAND RAISED ({self.hand_raise_frames})", (0, 255, 255)))
             if passing_detected:
-                status_text.append(f"PASSING PAPER ({self.passing_frames})")
+                action_labels.append((f"PASSING PAPER ({self.passing_frames})", (255, 0, 0)))
             if mobile_detected:
-                status_text.append(f"MOBILE PHONE ({self.mobile_frames})")
+                action_labels.append((f"MOBILE PHONE ({self.mobile_frames})", (0, 165, 255)))
 
-            # Draw detection status on annotated frame
             y_offset = 30
-            for text in status_text:
-                cv2.putText(annotated, text, (10, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                y_offset += 30
+            for text, text_color in action_labels:
+                (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+                # Semi-transparent background
+                overlay = annotated.copy()
+                cv2.rectangle(overlay, (8, y_offset - th - 4), (16 + tw, y_offset + baseline + 4), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
+                cv2.putText(annotated, text, (12, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2, cv2.LINE_AA)
+                y_offset += th + 14
 
-            # Draw frame counter
-            cv2.putText(annotated, f"Frame: {self.frame_num}",
-                        (annotated.shape[1] - 200, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-
-            # People count
-            cv2.putText(annotated, f"People: {len(all_keypoints)}",
-                        (annotated.shape[1] - 200, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+            # Info overlay (top-right)
+            info_lines = [
+                f"ML Processing",
+                f"People: {len(all_keypoints)}",
+            ]
+            for idx_line, info_text in enumerate(info_lines):
+                (tw, th), _ = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                x_pos = w_frame - tw - 12
+                y_pos = 25 + idx_line * 28
+                overlay = annotated.copy()
+                cv2.rectangle(overlay, (x_pos - 4, y_pos - th - 2), (w_frame - 4, y_pos + 6), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.5, annotated, 0.5, 0, annotated)
+                cv2.putText(annotated, info_text, (x_pos, y_pos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
 
             # Encode annotated frame to JPEG
-            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
             annotated_bytes = buffer.tobytes()
 
             return {
