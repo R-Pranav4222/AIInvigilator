@@ -615,20 +615,21 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         """Process a webcam frame through ML pipeline"""
         self.frame_count += 1
 
-        # Forward RAW frame to admin grid (every frame for smooth view)
-        raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
-        await self.channel_layer.group_send(
-            'admin_camera_grid',
-            {
-                'type': 'camera.frame',
-                'teacher_id': self.teacher_id,
-                'teacher_name': ACTIVE_STREAMS.get(self.teacher_id, {}).get('teacher_name', ''),
-                'lecture_hall': ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', ''),
-                'frame': raw_b64,
-            }
-        )
+        # Forward frame to admin grid (every 2nd frame = ~15fps for smooth admin view)
+        if self.frame_count % 2 == 0:
+            raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
+            await self.channel_layer.group_send(
+                'admin_camera_grid',
+                {
+                    'type': 'camera.frame',
+                    'teacher_id': self.teacher_id,
+                    'teacher_name': ACTIVE_STREAMS.get(self.teacher_id, {}).get('teacher_name', ''),
+                    'lecture_hall': ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', ''),
+                    'frame': raw_b64,
+                }
+            )
 
-        # ML processing every 3rd frame to save resources
+        # ML processing every 3rd frame (~10fps ML, matches original performance)
         if self.detection_active and self.frame_count % 3 == 0:
             try:
                 # Lazy init frame processor

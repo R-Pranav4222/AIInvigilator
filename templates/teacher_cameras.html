@@ -241,6 +241,7 @@
       </div>
       <span class="overlay-label">ML Processed View</span>
       <span class="live-dot" id="liveDot">LIVE</span>
+      <span class="live-dot" id="fpsBadge" style="display:none; right:80px; background:rgba(0,200,255,0.85);">-- FPS</span>
     </div>
   </div>
 
@@ -363,6 +364,7 @@
     placeholder.style.display = 'none';
     processedImg.style.display = 'block';
     liveDot.style.display = 'block';
+    document.getElementById('fpsBadge').style.display = 'block';
 
     // Request webcam
     try {
@@ -412,22 +414,55 @@
     };
   }
 
-  function startSendingFrames() {
-    // Send frame every ~100ms (10 FPS to server)
-    sendInterval = setInterval(() => {
-      if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
-      if (video.readyState < 2) return;
+  const TARGET_FPS = 30;          // Match original front.py camera FPS
+  const FRAME_INTERVAL = 1000 / TARGET_FPS;  // ~33ms per frame
+  let lastFrameTime = 0;
+  let rafId = null;
+  let fpsCounter = 0;
+  let fpsTimer = 0;
+  let currentFps = 0;
 
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(blob => {
-        if (blob && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
-          streamSocket.send(blob);
-        }
-      }, 'image/jpeg', 0.7);
-    }, 100);
+  function startSendingFrames() {
+    lastFrameTime = performance.now();
+    fpsTimer = lastFrameTime;
+    fpsCounter = 0;
+    sendLoop(lastFrameTime);
+  }
+
+  function sendLoop(timestamp) {
+    rafId = requestAnimationFrame(sendLoop);
+
+    // Throttle to TARGET_FPS
+    const elapsed = timestamp - lastFrameTime;
+    if (elapsed < FRAME_INTERVAL) return;
+    lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
+
+    if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
+    if (video.readyState < 2) return;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      if (blob && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
+        streamSocket.send(blob);
+      }
+    }, 'image/jpeg', 0.75);
+
+    // FPS display (update every 30 frames)
+    fpsCounter++;
+    if (fpsCounter >= 30) {
+      currentFps = (fpsCounter / ((timestamp - fpsTimer) / 1000)).toFixed(1);
+      fpsTimer = timestamp;
+      fpsCounter = 0;
+      const fpsBadge = document.getElementById('fpsBadge');
+      if (fpsBadge) fpsBadge.textContent = currentFps + ' FPS';
+    }
   }
 
   function stopSendingFrames() {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
     if (sendInterval) {
       clearInterval(sendInterval);
       sendInterval = null;
@@ -452,6 +487,8 @@
     processedImg.src = '';
     placeholder.style.display = 'flex';
     liveDot.style.display = 'none';
+    const fpsBadge2 = document.getElementById('fpsBadge');
+    if (fpsBadge2) fpsBadge2.style.display = 'none';
     activeSessionId = null;
   }
 
