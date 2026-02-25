@@ -62,7 +62,99 @@
     transition: var(--transition-base);
   }
   .btn-assign:hover { background: var(--success) !important; color: #fff !important; }
+  .btn-deassign {
+    background: rgba(245,158,11,0.1) !important;
+    border: 1px solid rgba(245,158,11,0.3) !important;
+    color: #f59e0b !important;
+    padding: 5px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
+    margin-left: 6px;
+  }
+  .btn-deassign:hover { background: #f59e0b !important; color: #fff !important; }
+  .btn-delete-hall {
+    background: rgba(239,68,68,0.1) !important;
+    border: 1px solid rgba(239,68,68,0.3) !important;
+    color: #ef4444 !important;
+    padding: 5px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
+  }
+  .btn-delete-hall:hover { background: #ef4444 !important; color: #fff !important; }
   .teacher-select { border-radius: var(--radius-sm); padding: 5px; font-size: 0.85rem; }
+  /* Confirmation Modal */
+  .modal-confirm-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-confirm-overlay.show { display: flex; }
+  .modal-confirm-box {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 30px;
+    max-width: 450px;
+    width: 90%;
+    text-align: center;
+  }
+  .modal-confirm-box h4 {
+    color: var(--text-primary);
+    margin-bottom: 12px;
+    font-weight: 700;
+  }
+  .modal-confirm-box p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 24px;
+  }
+  .modal-confirm-box .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  .modal-confirm-box .btn-cancel {
+    background: var(--bg-glass);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    padding: 8px 20px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition-base);
+  }
+  .modal-confirm-box .btn-cancel:hover { color: var(--text-primary); }
+  .modal-confirm-box .btn-confirm-danger {
+    background: #ef4444;
+    border: none;
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition-base);
+  }
+  .modal-confirm-box .btn-confirm-danger:hover { background: #dc2626; }
+  .modal-confirm-box .btn-confirm-warn {
+    background: #f59e0b;
+    border: none;
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition-base);
+  }
+  .modal-confirm-box .btn-confirm-warn:hover { background: #d97706; }
 </style>
 
 <section class="manage-section">
@@ -171,6 +263,7 @@
             <th>Building</th>
             <th>Assigned Teacher</th>
             <th>Map New Teacher</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -204,6 +297,20 @@
                 </div>
               </form>
             </td>
+            <td>
+              <div class="d-flex align-items-center" style="gap: 6px;">
+                {% if hall.assigned_teacher %}
+                <button class="btn btn-deassign" type="button"
+                  onclick="showConfirm('deassign', '{{ hall.id }}', '{{ hall.assigned_teacher.get_full_name|default:hall.assigned_teacher.username }}', '{{ hall.building }} - {{ hall.hall_name }}')">
+                  <i class="fas fa-user-minus"></i> Deassign
+                </button>
+                {% endif %}
+                <button class="btn btn-delete-hall" type="button"
+                  onclick="showConfirm('delete', '{{ hall.id }}', '', '{{ hall.building }} - {{ hall.hall_name }}')">
+                  <i class="fas fa-trash"></i> Delete
+                </button>
+              </div>
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -212,6 +319,22 @@
     
   </div>
 </section>
+
+<!-- Confirmation Modal -->
+<div class="modal-confirm-overlay" id="confirmModal">
+  <div class="modal-confirm-box">
+    <h4 id="confirmTitle"></h4>
+    <p id="confirmMessage"></p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="hideConfirm()">Cancel</button>
+      <form method="post" id="confirmForm" style="display:inline;">
+        {% csrf_token %}
+        <input type="hidden" name="hall_id" id="confirmHallId">
+        <button type="submit" id="confirmBtn" class="btn-confirm-danger">Confirm</button>
+      </form>
+    </div>
+  </div>
+</div>
 
 <!-- Optional JavaScript for Form Validation -->
 <script>
@@ -231,5 +354,43 @@
       });
     }, false);
   })();
+
+  function showConfirm(action, hallId, teacherName, hallName) {
+    const modal = document.getElementById('confirmModal');
+    const title = document.getElementById('confirmTitle');
+    const message = document.getElementById('confirmMessage');
+    const btn = document.getElementById('confirmBtn');
+    const form = document.getElementById('confirmForm');
+    document.getElementById('confirmHallId').value = hallId;
+
+    if (action === 'deassign') {
+      title.textContent = 'Deassign Teacher';
+      message.innerHTML = 'Remove <strong>' + teacherName + '</strong> from <strong>' + hallName + '</strong>?<br><small style="color:var(--text-muted);">The teacher will see "No hall assigned" on their dashboard.</small>';
+      btn.textContent = 'Deassign';
+      btn.className = 'btn-confirm-warn';
+      btn.name = 'unmap_teacher';
+    } else if (action === 'delete') {
+      title.textContent = 'Delete Lecture Hall';
+      message.innerHTML = 'Permanently delete <strong>' + hallName + '</strong>?<br><small style="color:#ef4444;">This will also delete ALL malpractice logs, review sessions, and camera sessions associated with this hall.</small>';
+      btn.textContent = 'Delete Hall';
+      btn.className = 'btn-confirm-danger';
+      btn.name = 'delete_hall';
+    }
+    modal.classList.add('show');
+  }
+
+  function hideConfirm() {
+    document.getElementById('confirmModal').classList.remove('show');
+  }
+
+  // Close modal on backdrop click
+  document.getElementById('confirmModal').addEventListener('click', function(e) {
+    if (e.target === this) hideConfirm();
+  });
+
+  // Close modal on Escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideConfirm();
+  });
 </script>
 {% endblock %}

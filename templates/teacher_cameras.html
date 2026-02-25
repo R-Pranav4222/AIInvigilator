@@ -216,6 +216,51 @@
 
 <div class="container teacher-cam-container" style="max-width: 1000px;">
 
+  {% if not has_hall %}
+  <!-- No Hall Assigned Banner -->
+  <div style="
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 14px;
+    padding: 40px 30px;
+    text-align: center;
+    margin-bottom: 30px;
+  ">
+    <i class="fas fa-building-circle-xmark" style="font-size: 3rem; color: #ef4444; margin-bottom: 16px; display: block;"></i>
+    <h3 style="color: var(--text-primary); font-weight: 800; margin-bottom: 10px;">No Hall Assigned</h3>
+    <p style="color: var(--text-muted); font-size: 0.95rem; max-width: 500px; margin: 0 auto 16px;">
+      You are currently not assigned to any lecture hall. Camera streaming requires an active hall assignment.
+      Please contact the admin to get assigned to a lecture hall.
+    </p>
+    <a href="{% url 'profile' %}" class="btn" style="
+      background: var(--accent-gradient);
+      color: #fff;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-decoration: none;
+    "><i class="fas fa-user" style="margin-right:6px;"></i>View Profile</a>
+  </div>
+  {% else %}
+  <!-- Hall Info -->
+  <div style="
+    background: rgba(0,212,255,0.06);
+    border: 1px solid rgba(0,212,255,0.2);
+    border-radius: 10px;
+    padding: 12px 20px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+  ">
+    <i class="fas fa-building" style="color: var(--accent-cyan);"></i>
+    <span style="color: var(--text-primary); font-weight: 600;">Assigned Hall:</span>
+    <span style="color: var(--accent-cyan); font-weight: 700;">{{ hall_name }}</span>
+  </div>
+  {% endif %}
+
   <!-- Status Banner -->
   <div class="status-banner idle" id="statusBanner">
     <i class="fas fa-circle-info"></i>

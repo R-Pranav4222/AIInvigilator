@@ -974,9 +974,50 @@ def manage_lecture_halls(request):
             try:
                 hall = LectureHall.objects.get(id=hall_id)
                 teacher = User.objects.get(id=teacher_id)
-                LectureHall.objects.filter(assigned_teacher=teacher).update(assigned_teacher=None)
+                # Clear previous assignment for this teacher
+                old_hall = LectureHall.objects.filter(assigned_teacher=teacher).first()
+                if old_hall:
+                    old_hall.assigned_teacher = None
+                    old_hall.save()
+                    TeacherProfile.objects.filter(user=teacher).update(lecture_hall=None)
+                # Clear previous teacher from this hall
+                if hall.assigned_teacher:
+                    TeacherProfile.objects.filter(user=hall.assigned_teacher).update(lecture_hall=None)
+                # Assign
                 hall.assigned_teacher = teacher
                 hall.save()
+                TeacherProfile.objects.filter(user=teacher).update(lecture_hall=hall)
+                return redirect('manage_lecture_halls')
+            except:
+                pass
+
+        elif 'unmap_teacher' in request.POST:
+            hall_id = request.POST.get('hall_id')
+            try:
+                hall = LectureHall.objects.get(id=hall_id)
+                if hall.assigned_teacher:
+                    TeacherProfile.objects.filter(user=hall.assigned_teacher).update(lecture_hall=None)
+                    hall.assigned_teacher = None
+                    hall.save()
+                return redirect('manage_lecture_halls')
+            except:
+                pass
+
+        elif 'delete_hall' in request.POST:
+            hall_id = request.POST.get('hall_id')
+            try:
+                hall = LectureHall.objects.get(id=hall_id)
+                # Clear teacher profile link
+                if hall.assigned_teacher:
+                    TeacherProfile.objects.filter(user=hall.assigned_teacher).update(lecture_hall=None)
+                # Delete all malpractice logs associated with this hall
+                MalpraticeDetection.objects.filter(lecture_hall=hall).delete()
+                # Delete review sessions
+                ReviewSession.objects.filter(lecture_hall=hall).delete()
+                # Delete camera sessions
+                CameraSession.objects.filter(lecture_hall=hall).delete()
+                # Delete the hall
+                hall.delete()
                 return redirect('manage_lecture_halls')
             except:
                 pass
@@ -1041,7 +1082,25 @@ def run_cameras_page(request):
 @login_required
 def teacher_cameras_page(request):
     """Render teacher camera page (non-admin)"""
-    return render(request, 'teacher_cameras.html')
+    has_hall = False
+    hall_name = ''
+    try:
+        profile = TeacherProfile.objects.get(user=request.user)
+        if profile.lecture_hall:
+            has_hall = True
+            hall_name = str(profile.lecture_hall)
+    except TeacherProfile.DoesNotExist:
+        pass
+    # Also check via LectureHall.assigned_teacher
+    if not has_hall:
+        hall = LectureHall.objects.filter(assigned_teacher=request.user).first()
+        if hall:
+            has_hall = True
+            hall_name = str(hall)
+    return render(request, 'teacher_cameras.html', {
+        'has_hall': has_hall,
+        'hall_name': hall_name,
+    })
 
 
 

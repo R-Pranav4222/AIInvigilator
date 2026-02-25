@@ -273,7 +273,8 @@ document.addEventListener('DOMContentLoaded', function() {
       gsap.fromTo(el,
         { y: 50, opacity: 0 },
         { y: 0, opacity: 1, duration: 0.8, delay: i % 3 * 0.12, ease: 'power3.out',
-          scrollTrigger: { trigger: el, start: 'top 90%', toggleActions: 'play none none none' }
+          scrollTrigger: { trigger: el, start: 'top 90%', toggleActions: 'play none none none' },
+          clearProps: 'opacity'
         }
       );
     });
@@ -282,7 +283,8 @@ document.addEventListener('DOMContentLoaded', function() {
       gsap.fromTo(el,
         { x: -60, opacity: 0 },
         { x: 0, opacity: 1, duration: 1, ease: 'power3.out',
-          scrollTrigger: { trigger: el, start: 'top 88%' }
+          scrollTrigger: { trigger: el, start: 'top 88%' },
+          clearProps: 'opacity'
         }
       );
     });
@@ -291,7 +293,8 @@ document.addEventListener('DOMContentLoaded', function() {
       gsap.fromTo(el,
         { x: 60, opacity: 0 },
         { x: 0, opacity: 1, duration: 1, ease: 'power3.out',
-          scrollTrigger: { trigger: el, start: 'top 88%' }
+          scrollTrigger: { trigger: el, start: 'top 88%' },
+          clearProps: 'opacity'
         }
       );
     });
@@ -300,17 +303,19 @@ document.addEventListener('DOMContentLoaded', function() {
       gsap.fromTo(el,
         { scale: 0.85, opacity: 0 },
         { scale: 1, opacity: 1, duration: 1, ease: 'power3.out',
-          scrollTrigger: { trigger: el, start: 'top 88%' }
+          scrollTrigger: { trigger: el, start: 'top 88%' },
+          clearProps: 'opacity'
         }
       );
     });
 
     // Hero entrance — direct animations (no ScrollTrigger)
-    gsap.from('.hero-badge', { y: 20, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out' });
-    gsap.from('.hero-title', { y: 40, opacity: 0, duration: 1, delay: 0.3, ease: 'power3.out' });
-    gsap.from('.hero-subtitle', { y: 30, opacity: 0, duration: 1, delay: 0.5, ease: 'power3.out' });
-    gsap.from('.hero-actions', { y: 30, opacity: 0, duration: 1, delay: 0.7, ease: 'power3.out' });
-    gsap.from('.hero-visual', { scale: 0.8, opacity: 0, duration: 1.2, delay: 0.5, ease: 'elastic.out(1,0.5)' });
+    // Use clearProps:'opacity' to prevent compositing issues with gradient-text
+    gsap.from('.hero-badge', { y: 20, opacity: 0, duration: 0.8, delay: 0.1, ease: 'power3.out', clearProps: 'opacity' });
+    gsap.from('.hero-title', { y: 40, opacity: 0, duration: 1, delay: 0.3, ease: 'power3.out', clearProps: 'opacity' });
+    gsap.from('.hero-subtitle', { y: 30, opacity: 0, duration: 1, delay: 0.5, ease: 'power3.out', clearProps: 'opacity' });
+    gsap.from('.hero-actions', { y: 30, opacity: 0, duration: 1, delay: 0.7, ease: 'power3.out', clearProps: 'opacity' });
+    gsap.from('.hero-visual', { scale: 0.8, opacity: 0, duration: 1.2, delay: 0.5, ease: 'elastic.out(1,0.5)', clearProps: 'opacity' });
 
     // Rotating rings
     gsap.to('.ring-1', { rotation: 360, duration: 20, repeat: -1, ease: 'none' });
