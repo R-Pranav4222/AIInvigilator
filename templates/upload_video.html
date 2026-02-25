@@ -251,9 +251,11 @@
           <label for="lecture-hall-select" class="form-label-dark" style="font-size: 1rem; margin-bottom: 10px;">Select Lecture Hall:</label>
           <select class="lecture-hall-select" id="lecture-hall-select">
             <option value="">-- Select Hall --</option>
-            <option value="1">Hall 1</option>
-            <option value="2">Hall 2</option>
-            <option value="3">Hall 3</option>
+            {% for hall in lecture_halls %}
+            <option value="{{ hall.id }}">{{ hall }}</option>
+            {% empty %}
+            <option value="" disabled>No halls available</option>
+            {% endfor %}
           </select>
         </div>
 

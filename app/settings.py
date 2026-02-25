@@ -37,14 +37,32 @@ ALLOWED_HOSTS = ['*']
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'app',
 ]
+
+# ASGI application (Channels)
+ASGI_APPLICATION = 'app.asgi.application'
+
+# Channel Layers - Use Redis for production, InMemory for dev
+# To switch to Redis: docker run -d -p 6379:6379 redis:7-alpine
+# Then uncomment the Redis config and comment InMemory
+CHANNEL_LAYERS = {
+    'default': {
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {
+        #     'hosts': [('127.0.0.1', 6379)],
+        # },
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -137,8 +155,6 @@ LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 
 USE_I18N = True
-
-USE_L10N = True
 
 USE_TZ = True
 

@@ -238,6 +238,43 @@
     font-size: 1.1rem;
     margin-right: 4px;
   }
+
+  /* Source Badge */
+  .source-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 50px;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .source-live {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+  .source-recorded {
+    background: rgba(99, 102, 241, 0.12);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+  }
+
+  /* Complete Review Button */
+  .btn-complete-review {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+    color: #fff !important;
+    border: none;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
+  }
+  .btn-complete-review:hover {
+    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
+    transform: translateY(-1px);
+    color: #fff !important;
+  }
 </style>
 
 <section class="malpractice-section">
@@ -296,6 +333,15 @@
               <option value="">All</option>
               <option value="above_50" {% if probability_filter == 'above_50' %}selected{% endif %}>Above 50%</option>
               <option value="below_50" {% if probability_filter == 'below_50' %}selected{% endif %}>Below 50%</option>
+            </select>
+          </div>
+          <!-- Source Type Filter -->
+          <div class="form-group col-md-2">
+            <label for="source">Source:</label>
+            <select name="source" id="source" class="form-control">
+              <option value="">All Sources</option>
+              <option value="live" {% if source_filter == 'live' %}selected{% endif %}>Live Camera</option>
+              <option value="recorded" {% if source_filter == 'recorded' %}selected{% endif %}>Recorded Video</option>
             </select>
           </div>
           <!-- Assigned Faculty -->
@@ -381,21 +427,14 @@
               <option value="below_50" {% if probability_filter == 'below_50' %}selected{% endif %}>Below 50%</option>
             </select>
           </div>
-          <!-- Building -->
+          <!-- Source Type Filter -->
           <div class="form-group col-md-2">
-            <label for="building">Building:</label>
-            <select name="building" class="form-control" id="building">
+            <label for="source">Source:</label>
+            <select name="source" id="source" class="form-control">
               <option value="">All</option>
-              {% for b in buildings %}
-              <option value="{{ b }}" {% if building_filter == b %}selected{% endif %}>{{ b }}</option>
-              {% endfor %}
+              <option value="live" {% if source_filter == 'live' %}selected{% endif %}>Live</option>
+              <option value="recorded" {% if source_filter == 'recorded' %}selected{% endif %}>Recorded</option>
             </select>
-          </div>
-          <!-- Lecture Hall Search -->
-          <div class="form-group col-md-3">
-            <label for="q">Lecture Hall:</label>
-            <input type="text" name="q" id="q" class="form-control" placeholder="Enter LH name (e.g., LH1)"
-              value="{{ query }}">
           </div>
           <!-- Apply Button -->
           <div class="form-group col-md-1 d-flex align-items-end">
@@ -431,6 +470,13 @@
     <!-- Delete Logs Options (Admin Only) -->
     {% if request.user.is_superuser %}
     <div class="text-right mb-3">
+      <!-- Complete Review & Notify Button -->
+      {% if review_filter == 'reviewed' %}
+      <button type="button" class="btn btn-complete-review mr-2" data-toggle="modal" data-target="#completeReviewModal">
+        <i class="fas fa-envelope"></i> Complete Review &amp; Notify Teacher
+      </button>
+      {% endif %}
+
       <!-- AI Actions Button -->
       {% if review_filter != 'reviewed' %}
       <div class="btn-group mr-2">
@@ -496,6 +542,7 @@
             <th scope="col">Time</th>
             <th scope="col">Malpractice</th>
             <th scope="col">Probability of Malpractice</th>
+            <th scope="col">Source</th>
             <th scope="col">Lecture Hall</th>
             <th scope="col">Assigned Faculty</th>
             <th scope="col">View</th>
@@ -528,6 +575,13 @@
                 {% endif %}
               {% else %}
                 <span class="text-muted">-</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if i.source_type == 'live' %}
+                <span class="source-badge source-live"><i class="fas fa-video"></i> Live</span>
+              {% else %}
+                <span class="source-badge source-recorded"><i class="fas fa-upload"></i> Recorded</span>
               {% endif %}
             </td>
             <td>
@@ -590,7 +644,7 @@
           {% endfor %}
           {% else %}
           <tr>
-            <td colspan="{% if is_admin %}12{% else %}11{% endif %}" class="text-center text-muted">
+            <td colspan="{% if is_admin %}13{% else %}12{% endif %}" class="text-center text-muted">
               No malpractice logs found.
             </td>
           </tr>
@@ -1055,6 +1109,86 @@
   }
 
 
+  // COMPLETE REVIEW SESSION
+  // Update hall info when teacher is selected
+  document.addEventListener('DOMContentLoaded', function() {
+    const reviewTeacherSelect = document.getElementById('reviewTeacher');
+    if (reviewTeacherSelect) {
+      reviewTeacherSelect.addEventListener('change', function() {
+        const selected = this.options[this.selectedIndex];
+        const hallName = selected.getAttribute('data-hall-name');
+        const hallInfo = document.getElementById('reviewHallInfo');
+        const hallNameEl = document.getElementById('reviewHallName');
+        if (hallName) {
+          hallNameEl.textContent = hallName;
+          hallInfo.style.display = 'block';
+        } else {
+          hallInfo.style.display = 'none';
+        }
+      });
+    }
+  });
+
+  function completeReviewSession() {
+    const teacherSelect = document.getElementById('reviewTeacher');
+    const teacherId = teacherSelect.value;
+    const selected = teacherSelect.options[teacherSelect.selectedIndex];
+    const hallId = selected.getAttribute('data-hall-id');
+    const reviewDate = document.getElementById('reviewDate').value;
+
+    if (!teacherId) {
+      alert('Please select a teacher.');
+      return;
+    }
+    if (!hallId) {
+      alert('Selected teacher is not assigned to any lecture hall.');
+      return;
+    }
+
+    const btn = document.getElementById('completeReviewBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+
+    const payload = {
+      teacher_id: parseInt(teacherId),
+      hall_id: parseInt(hallId)
+    };
+    if (reviewDate) payload.date = reviewDate;
+
+    fetch('/complete_review_session/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': '{{ csrf_token }}'
+      },
+      body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-envelope"></i> Complete & Notify';
+
+      $('#completeReviewModal').on('hidden.bs.modal', function() {
+        $(this).off('hidden.bs.modal');
+        if (data.success) {
+          alert(data.message);
+        } else {
+          alert('Error: ' + (data.error || 'Unknown error'));
+        }
+      });
+      $('#completeReviewModal').modal('hide');
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-envelope"></i> Complete & Notify';
+      $('#completeReviewModal').on('hidden.bs.modal', function() {
+        $(this).off('hidden.bs.modal');
+        alert('Request failed: ' + err);
+      });
+      $('#completeReviewModal').modal('hide');
+    });
+  }
+
 
 </script>
 
@@ -1161,3 +1295,59 @@
     </div>
   </div>
 </div>
+
+<!-- Complete Review & Notify Modal -->
+{% if request.user.is_superuser %}
+<div class="modal fade" id="completeReviewModal" tabindex="-1" role="dialog" aria-labelledby="completeReviewModalLabel"
+  aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#10b981 0%,#059669 100%);border-bottom:none;">
+        <h5 class="modal-title" id="completeReviewModalLabel" style="color:#fff;">
+          <i class="fas fa-clipboard-check"></i> Complete Review Session
+        </h5>
+        <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>Select the teacher and lecture hall to complete the review session. This will:</p>
+        <ul style="color:var(--text-secondary);">
+          <li>Make all confirmed malpractice logs visible to the teacher</li>
+          <li>Send a summary email + SMS notification</li>
+          <li>Create a review session record</li>
+        </ul>
+        <div class="form-group mt-3">
+          <label for="reviewTeacher"><strong>Teacher:</strong></label>
+          <select class="form-control" id="reviewTeacher">
+            <option value="">Select teacher...</option>
+            {% for f in faculty_list %}
+            <option value="{{ f.id }}" data-hall-id="{% if f.lecturehall %}{{ f.lecturehall.id }}{% endif %}"
+              data-hall-name="{% if f.lecturehall %}{{ f.lecturehall.building }} - {{ f.lecturehall.hall_name }}{% endif %}">
+              {{ f.get_full_name|default:f.username }}
+              {% if f.lecturehall %} ({{ f.lecturehall.building }} - {{ f.lecturehall.hall_name }}){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="reviewDate"><strong>Filter by Date (optional):</strong></label>
+          <input type="date" class="form-control" id="reviewDate">
+        </div>
+        <div id="reviewHallInfo" style="display:none;" class="mt-2 p-2" 
+             style="background:var(--bg-surface);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);">
+          <small class="text-muted">Lecture Hall: <strong id="reviewHallName"></strong></small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">
+          <i class="fas fa-times"></i> Cancel
+        </button>
+        <button type="button" class="btn btn-complete-review" id="completeReviewBtn" onclick="completeReviewSession()">
+          <i class="fas fa-envelope"></i> Complete &amp; Notify
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}

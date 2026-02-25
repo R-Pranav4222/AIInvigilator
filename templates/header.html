@@ -79,6 +79,18 @@
               <i class="fas fa-cloud-arrow-up" style="margin-right:4px;font-size:0.8rem;"></i> Upload
             </a>
           </li>
+          {% else %}
+          <!-- Teacher-specific nav items -->
+          <li class="nav-item">
+            <a href="{% url 'teacher_cameras_page' %}" class="nav-link {% if request.resolver_match.url_name == 'teacher_cameras_page' %}active{% endif %}">
+              <i class="fas fa-video" style="margin-right:4px;font-size:0.8rem;"></i> Camera
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="{% url 'upload_video' %}" class="nav-link {% if request.resolver_match.url_name == 'upload_video' %}active{% endif %}">
+              <i class="fas fa-cloud-arrow-up" style="margin-right:4px;font-size:0.8rem;"></i> Upload
+            </a>
+          </li>
           {% endif %}
           <li class="nav-item dropdown ml-2">
             <a class="nav-link nav-user-pill dropdown-toggle" href="#" id="profileDropdown" role="button"

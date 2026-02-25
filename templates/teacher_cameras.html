@@ -1,0 +1,486 @@
+{% include 'header.html' %}
+{% load static %}
+
+<style>
+  .teacher-cam-container { padding-top: 100px; padding-bottom: 60px; }
+
+  .cam-card {
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-xl);
+    padding: 30px;
+    margin-bottom: 30px;
+    position: relative;
+    overflow: hidden;
+  }
+  .cam-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--accent-gradient);
+  }
+  .section-heading {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+  }
+  .section-sub {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+  }
+
+  /* Status Banner */
+  .status-banner {
+    padding: 16px 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .status-banner.idle {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+  }
+  .status-banner.requested {
+    background: rgba(245,158,11,0.1);
+    border: 1px solid rgba(245,158,11,0.3);
+    color: #f59e0b;
+  }
+  .status-banner.active {
+    background: rgba(0,212,255,0.08);
+    border: 1px solid rgba(0,212,255,0.3);
+    color: var(--accent-cyan);
+  }
+
+  /* Camera Preview */
+  .camera-preview {
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    aspect-ratio: 16 / 9;
+  }
+  .camera-preview video,
+  .camera-preview canvas,
+  .camera-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .camera-preview .overlay-label {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    z-index: 2;
+  }
+  .camera-preview .live-dot {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: var(--danger);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #fff;
+    animation: pulse 1.5s infinite;
+    z-index: 2;
+    display: none;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .camera-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #444;
+    font-size: 1.1rem;
+    gap: 10px;
+  }
+  .camera-placeholder i { font-size: 3rem; }
+
+  /* Confirmation Modal */
+  .confirm-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(8px);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+  }
+  .confirm-modal-overlay.show { display: flex; }
+  .confirm-modal-box {
+    background: var(--bg-card, #1a1a2e);
+    border: 1px solid var(--border-default);
+    border-radius: 16px;
+    padding: 40px;
+    max-width: 440px;
+    width: 90%;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .confirm-modal-box h3 {
+    color: var(--text-primary);
+    font-weight: 800;
+    font-size: 1.3rem;
+    margin-bottom: 12px;
+  }
+  .confirm-modal-box p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 24px;
+    line-height: 1.6;
+  }
+  .confirm-modal-box .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  .confirm-modal-box .modal-btn {
+    padding: 12px 30px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .modal-btn.accept { background: var(--success); color: #fff; }
+  .modal-btn.accept:hover { background: #0ea572; }
+  .modal-btn.deny { background: var(--danger); color: #fff; }
+  .modal-btn.deny:hover { background: #dc2626; }
+
+  /* Detection Log */
+  .detection-log {
+    max-height: 250px;
+    overflow-y: auto;
+    margin-top: 16px;
+  }
+  .det-item {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    font-size: 0.82rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .det-item .d-type { font-weight: 700; color: var(--danger); }
+  .det-item .d-prob { color: var(--warning, #f59e0b); font-weight: 600; }
+  .det-item .d-time { color: var(--text-muted); font-size: 0.75rem; }
+</style>
+
+<!-- Confirmation Modal (initially hidden) -->
+<div class="confirm-modal-overlay" id="confirmModal">
+  <div class="confirm-modal-box">
+    <h3><i class="fas fa-video" style="margin-right:8px;"></i>Camera Request</h3>
+    <p id="confirmMessage">The admin has requested to start your camera for live monitoring. Do you accept?</p>
+    <div class="modal-actions">
+      <button class="modal-btn accept" onclick="respondToRequest(true)">
+        <i class="fas fa-check" style="margin-right:6px;"></i>Accept
+      </button>
+      <button class="modal-btn deny" onclick="respondToRequest(false)">
+        <i class="fas fa-times" style="margin-right:6px;"></i>Deny
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="container teacher-cam-container" style="max-width: 1000px;">
+
+  <!-- Status Banner -->
+  <div class="status-banner idle" id="statusBanner">
+    <i class="fas fa-circle-info"></i>
+    <span id="statusText">Camera idle. Waiting for admin to initiate camera request...</span>
+  </div>
+
+  <!-- Camera View Card -->
+  <div class="cam-card">
+    <h2 class="section-heading"><i class="fas fa-video" style="margin-right:10px;font-size:1.2rem;"></i>My Camera</h2>
+    <p class="section-sub">Your webcam view with ML detection overlays. Admin sees a plain (non-annotated) version.</p>
+
+    <div class="camera-preview" id="cameraPreview">
+      <!-- Hidden video element for webcam capture -->
+      <video id="webcamVideo" autoplay playsinline muted style="display:none;"></video>
+      <!-- Canvas for frame extraction (hidden) -->
+      <canvas id="captureCanvas" style="display:none;"></canvas>
+      <!-- ML-processed feed from server -->
+      <img id="processedFeed" src="" alt="Processed Feed" style="display:none;">
+      <!-- Placeholder -->
+      <div class="camera-placeholder" id="cameraPlaceholder">
+        <i class="fas fa-video-slash"></i>
+        <span>Camera not active</span>
+      </div>
+      <span class="overlay-label">ML Processed View</span>
+      <span class="live-dot" id="liveDot">LIVE</span>
+    </div>
+  </div>
+
+  <!-- Live Detections -->
+  <div class="cam-card">
+    <h2 class="section-heading"><i class="fas fa-eye" style="margin-right:10px;font-size:1.2rem;"></i>Live Detections</h2>
+    <p class="section-sub">Malpractice events detected by AI on your camera stream (visible only to you during live session).</p>
+    <div class="detection-log" id="detectionLog">
+      <div class="empty-state" id="emptyDetections" style="padding:20px;">
+        <p style="opacity:0.5;">No detections yet.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ======================================
+// TEACHER CAMERA — WebSocket Streaming
+// ======================================
+(function() {
+  const WS_BASE = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  let notifSocket = null;
+  let streamSocket = null;
+  let webcamStream = null;
+  let sendInterval = null;
+  let pendingSessionId = null;
+  let activeSessionId = null;
+
+  const video = document.getElementById('webcamVideo');
+  const canvas = document.getElementById('captureCanvas');
+  const ctx = canvas.getContext('2d');
+  const processedImg = document.getElementById('processedFeed');
+  const placeholder = document.getElementById('cameraPlaceholder');
+  const liveDot = document.getElementById('liveDot');
+  const statusBanner = document.getElementById('statusBanner');
+  const statusText = document.getElementById('statusText');
+
+  // ---- Notification WebSocket ----
+  function connectNotifications() {
+    notifSocket = new WebSocket(WS_BASE + '/ws/notifications/');
+
+    notifSocket.onopen = () => {
+      console.log('[WS] Teacher notification connected');
+    };
+
+    notifSocket.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      handleNotification(data);
+    };
+
+    notifSocket.onclose = () => {
+      console.log('[WS] Notification closed, reconnecting in 3s...');
+      setTimeout(connectNotifications, 3000);
+    };
+  }
+
+  function handleNotification(data) {
+    switch (data.type) {
+      case 'initial_state':
+        // Check if we have an active session
+        if (data.my_sessions && data.my_sessions.length > 0) {
+          const s = data.my_sessions[0];
+          if (s.status === 'requested') {
+            showConfirmModal(s.session_id);
+          } else if (s.status === 'active') {
+            activeSessionId = s.session_id;
+            startStreaming();
+          }
+        }
+        break;
+
+      case 'camera_request':
+        showConfirmModal(data.session_id);
+        break;
+
+      case 'camera_approved':
+        activeSessionId = data.session_id;
+        startStreaming();
+        break;
+
+      case 'camera_stop':
+        stopStreaming();
+        setStatus('idle', 'Camera stopped by admin.');
+        break;
+    }
+  }
+
+  // ---- Confirmation Modal ----
+  function showConfirmModal(sessionId) {
+    pendingSessionId = sessionId;
+    document.getElementById('confirmModal').classList.add('show');
+    setStatus('requested', 'Admin has requested your camera. Please accept or deny.');
+  }
+
+  window.respondToRequest = function(accepted) {
+    document.getElementById('confirmModal').classList.remove('show');
+
+    if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+      notifSocket.send(JSON.stringify({
+        type: 'camera_response',
+        session_id: pendingSessionId,
+        accepted: accepted
+      }));
+    }
+
+    if (accepted) {
+      activeSessionId = pendingSessionId;
+      setStatus('active', 'Camera request accepted. Starting stream...');
+      // Camera will be started when we receive camera_approved from server
+    } else {
+      setStatus('idle', 'Camera request denied.');
+      pendingSessionId = null;
+    }
+  };
+
+  // ---- Start Webcam + Streaming ----
+  async function startStreaming() {
+    setStatus('active', 'Camera active — streaming to server with ML processing.');
+    placeholder.style.display = 'none';
+    processedImg.style.display = 'block';
+    liveDot.style.display = 'block';
+
+    // Request webcam
+    try {
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720, facingMode: 'user' },
+        audio: false
+      });
+      video.srcObject = webcamStream;
+      await video.play();
+    } catch (err) {
+      console.error('Webcam access denied:', err);
+      setStatus('idle', 'Webcam access denied. Please grant camera permission and try again.');
+      return;
+    }
+
+    // Connect stream WebSocket
+    streamSocket = new WebSocket(WS_BASE + '/ws/camera/stream/');
+
+    streamSocket.onopen = () => {
+      console.log('[WS] Camera stream connected');
+      // Start sending frames
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      startSendingFrames();
+    };
+
+    streamSocket.onmessage = (e) => {
+      if (e.data instanceof Blob) {
+        // Binary: annotated JPEG frame from server
+        const url = URL.createObjectURL(e.data);
+        processedImg.onload = () => URL.revokeObjectURL(url);
+        processedImg.src = url;
+      } else {
+        // JSON: detection info
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'detection') {
+            addDetection(data);
+          }
+        } catch(ex) {}
+      }
+    };
+
+    streamSocket.onclose = () => {
+      console.log('[WS] Stream closed');
+      stopSendingFrames();
+    };
+  }
+
+  function startSendingFrames() {
+    // Send frame every ~100ms (10 FPS to server)
+    sendInterval = setInterval(() => {
+      if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
+      if (video.readyState < 2) return;
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        if (blob && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
+          streamSocket.send(blob);
+        }
+      }, 'image/jpeg', 0.7);
+    }, 100);
+  }
+
+  function stopSendingFrames() {
+    if (sendInterval) {
+      clearInterval(sendInterval);
+      sendInterval = null;
+    }
+  }
+
+  function stopStreaming() {
+    stopSendingFrames();
+
+    if (streamSocket) {
+      streamSocket.close();
+      streamSocket = null;
+    }
+
+    if (webcamStream) {
+      webcamStream.getTracks().forEach(t => t.stop());
+      webcamStream = null;
+    }
+
+    video.srcObject = null;
+    processedImg.style.display = 'none';
+    processedImg.src = '';
+    placeholder.style.display = 'flex';
+    liveDot.style.display = 'none';
+    activeSessionId = null;
+  }
+
+  // ---- Status Banner ----
+  function setStatus(type, text) {
+    statusBanner.className = 'status-banner ' + type;
+    const icons = { idle: 'fa-circle-info', requested: 'fa-bell', active: 'fa-circle-play' };
+    statusBanner.querySelector('i').className = 'fas ' + (icons[type] || 'fa-circle-info');
+    statusText.textContent = text;
+  }
+
+  // ---- Detections ----
+  function addDetection(det) {
+    document.getElementById('emptyDetections').style.display = 'none';
+    const log = document.getElementById('detectionLog');
+    const item = document.createElement('div');
+    item.className = 'det-item';
+    const now = new Date().toLocaleTimeString();
+    item.innerHTML = `
+      <span class="d-type">${det.action || det.malpractice || 'Detection'}</span>
+      <span class="d-prob">${det.probability ? det.probability.toFixed(1) + '%' : ''}</span>
+      <span class="d-time">${now}</span>
+    `;
+    log.insertBefore(item, log.firstChild);
+  }
+
+  // ---- Init ----
+  connectNotifications();
+})();
+</script>
+
+{% include 'footer.html' %}

@@ -1,92 +1,77 @@
 {% include 'header.html' %}
 {% load static %}
 
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Run Cameras</title>
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <style>
-    body {
-      background: linear-gradient(135deg, #f8f9fa 0%, #e0e0e0 100%);
-      font-family: 'Poppins', sans-serif;
-    }
-    .script-container {
-      margin-top: 80px;
-      margin-bottom: 60px;
-    }
-    .script-card {
-      background-color: #ffffff;
-      border-radius: 12px;
-      padding: 40px 30px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-      transition: transform 0.3s ease;
-    }
-    .script-card:hover {
-      transform: translateY(-5px);
-    }
-    .script-heading {
-      font-size: 2.2rem;
-      font-weight: 700;
-      color: #333;
-      text-align: center;
-      margin-bottom: 30px;
-      position: relative;
-    }
-    .script-heading::after {
-      content: "";
-      display: block;
-      width: 80px;
-      height: 4px;
-      background-color: #28a745;
-      margin: 12px auto 0;
-      border-radius: 10px;
-    }
-    .run-btn {
-      font-size: 1.1rem;
-      font-weight: 600;
-      padding: 14px;
-      border-radius: 8px;
-      transition: background-color 0.3s ease;
-      width: 100%;
-      margin-bottom: 10px;
-    }
-    .btn-success {
-      background-color: #28a745;
-      border: none;
-      color: #fff;
-    }
-    .btn-success:hover {
-      background-color: #218838;
-    }
-    .btn-danger {
-      background-color: #dc3545;
-      border: none;
-      color: #fff;
-    }
-    .btn-danger:hover {
-      background-color: #c82333;
-    }
-    .description {
-      font-size: 1rem;
-      color: #555;
-      margin-bottom: 25px;
-      text-align: center;
-    }
-    /* Loading icon container */
-    #loading {
-      display: none;
-      text-align: center;
-      margin-top: 20px;
-    }
-    /* Stop button is hidden initially */
-    #stop-button {
-      display: none;
-      margin-bottom: 10px;
-    }
-  </style>
-</head>
-<body>
+<style>
+  .script-container { margin-top: 100px; margin-bottom: 60px; }
+  .script-card {
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-xl);
+    padding: 40px 30px;
+    transition: var(--transition-base);
+    position: relative;
+    overflow: hidden;
+  }
+  .script-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--accent-gradient);
+  }
+  .script-card:hover { transform: translateY(-3px); box-shadow: var(--glow-subtle); }
+  .script-heading {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    text-align: center;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .script-heading::after {
+    content: "";
+    display: block;
+    width: 50px;
+    height: 3px;
+    background: var(--success);
+    margin: 12px auto 0;
+    border-radius: 2px;
+  }
+  .description {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin: 20px 0 25px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .run-btn {
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 14px;
+    border-radius: var(--radius-sm);
+    transition: var(--transition-base);
+    width: 100%;
+    margin-bottom: 10px;
+  }
+  .btn-success {
+    background: var(--success) !important;
+    border: none !important;
+    color: #fff !important;
+  }
+  .btn-success:hover { background: #0ea572 !important; box-shadow: 0 4px 15px rgba(16,185,129,0.3); }
+  .btn-danger {
+    background: var(--danger) !important;
+    border: none !important;
+    color: #fff !important;
+  }
+  .btn-danger:hover { background: #dc2626 !important; box-shadow: 0 4px 15px rgba(239,68,68,0.3); }
+  #loading { display: none; text-align: center; margin-top: 20px; }
+  #loading p { color: var(--text-muted); font-size: 0.9rem; margin-top: 8px; }
+  #stop-button { display: none; margin-bottom: 10px; }
+</style>
+
   <div class="container script-container">
     <div class="row justify-content-center">
       <div class="col-md-8">
@@ -162,5 +147,3 @@
     });
   });
   </script>
-</body>
-</html>

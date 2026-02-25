@@ -2,7 +2,6 @@
 from django.contrib import admin
 from django.urls import path
 from . import views
-from django.conf.urls import url
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -20,6 +19,7 @@ urlpatterns = [
     path('logout/',views.logout, name='logout'),
     path('malpractice_log/',views.malpractice_log, name='malpractice_log'),
     path('review_malpractice/', views.review_malpractice, name='review_malpractice'),
+    path('complete_review_session/', views.complete_review_session, name='complete_review_session'),
     path('ai_bulk_action/', views.ai_bulk_action, name='ai_bulk_action'),
     path('delete_malpractice/<int:log_id>/', views.delete_malpractice, name='delete_malpractice'),
     path('delete_all_logs/', views.delete_all_logs, name='delete_all_logs'),
@@ -27,6 +27,7 @@ urlpatterns = [
     path('manage-lecture-halls/', views.manage_lecture_halls, name='manage_lecture_halls'),
     path('view_teachers/', views.view_teachers, name='view_teachers'),
     path('run_cameras/', views.run_cameras_page, name='run_cameras_page'),
+    path('teacher_cameras/', views.teacher_cameras_page, name='teacher_cameras_page'),
     path('trigger_camera_scripts/', views.trigger_camera_scripts, name='trigger_camera_scripts'),
     path('stop_camera_scripts/', views.stop_camera_scripts, name='stop_camera_scripts'),
     path('serve_video/', views.serve_video, name='serve_video'),

@@ -414,6 +414,7 @@ def malpractice_log(request):
     assignment_filter = request.GET.get('assigned', '').strip()
     review_filter = request.GET.get('review', '').strip() or 'not_reviewed'
     probability_filter = request.GET.get('probability', '').strip()
+    source_filter = request.GET.get('source', '').strip()
 
 
     # Base Queryset based on user role
@@ -425,11 +426,13 @@ def malpractice_log(request):
         elif review_filter.lower() == 'not_reviewed':
             logs = logs.filter(verified=False)
     else:
+        # Teachers only see logs that admin has made visible after review
         assigned_halls = LectureHall.objects.filter(assigned_teacher=request.user)
         logs = MalpraticeDetection.objects.filter(
             lecture_hall__in=assigned_halls,
             verified=True,
-            is_malpractice=True
+            is_malpractice=True,
+            teacher_visible=True
         )
 
     # Ensure all logs have probability scores (retroactive calculation)
@@ -464,11 +467,10 @@ def malpractice_log(request):
         elif probability_filter == 'below_50':
             logs = logs.filter(probability_score__lt=50)
 
-    # if review_filter:
-    #     if review_filter.lower() == 'reviewed':
-    #         logs = logs.filter(verified=True)
-    #     elif review_filter.lower() == 'not_reviewed':
-    #         logs = logs.filter(verified=False)
+    # Apply source type filter (live camera vs recorded upload)
+    if source_filter:
+        if source_filter in ('live', 'recorded'):
+            logs = logs.filter(source_type=source_filter)
 
     logs = logs.order_by('-date', '-time')
 
@@ -495,6 +497,7 @@ def malpractice_log(request):
         'assignment_filter': assignment_filter,
         'review_filter': review_filter,
         'probability_filter': probability_filter,
+        'source_filter': source_filter,
         'faculty_list': User.objects.filter(teacherprofile__isnull=False, is_superuser=False),
         'buildings': LectureHall.objects.values_list('building', flat=True).distinct(),
     }
@@ -574,6 +577,9 @@ def review_malpractice(request):
         # Update the log
         log.verified = True
         log.is_malpractice = (decision == 'yes')
+        # Make visible to teacher after admin review (malpractice decisions only)
+        if log.is_malpractice:
+            log.teacher_visible = True
         log.save()
 
         # If approved as malpractice, send notifications in background thread
@@ -589,6 +595,122 @@ def review_malpractice(request):
 
     except Exception as e:
         print(f"[EXCEPTION] Unexpected error in review_malpractice: {e}")
+        return JsonResponse({'success': False, 'error': 'Internal server error'})
+
+
+@csrf_exempt
+@login_required
+@user_passes_test(is_admin)
+def complete_review_session(request):
+    """Complete a review session: create ReviewSession record, set teacher_visible=True
+    for all reviewed malpractice logs of a given teacher/hall, and send summary email."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Invalid request method'})
+
+    try:
+        data = json.loads(request.body)
+        teacher_id = data.get('teacher_id')
+        hall_id = data.get('hall_id')
+        review_date = data.get('date')  # optional: filter by specific date
+
+        if not teacher_id or not hall_id:
+            return JsonResponse({'success': False, 'error': 'teacher_id and hall_id required'})
+
+        teacher = User.objects.get(id=teacher_id)
+        hall = LectureHall.objects.get(id=hall_id)
+
+        # Get all reviewed malpractice logs for this teacher's hall
+        reviewed_logs = MalpraticeDetection.objects.filter(
+            lecture_hall=hall,
+            verified=True
+        )
+        if review_date:
+            reviewed_logs = reviewed_logs.filter(date=review_date)
+
+        total_reviewed = reviewed_logs.count()
+        flagged_count = reviewed_logs.filter(is_malpractice=True).count()
+
+        # Make all malpractice logs visible to teacher
+        reviewed_logs.filter(is_malpractice=True).update(teacher_visible=True)
+
+        # Create ReviewSession record
+        review_session = ReviewSession.objects.create(
+            admin_user=request.user,
+            lecture_hall=hall,
+            teacher=teacher,
+            review_type='live',
+            logs_reviewed=total_reviewed,
+            logs_flagged=flagged_count,
+            email_sent=False
+        )
+
+        # Send summary email in background
+        def send_review_email(session_id):
+            try:
+                session = ReviewSession.objects.get(id=session_id)
+                teacher_user = session.teacher
+                hall_obj = session.lecture_hall
+
+                subject = 'Malpractice Review Session Complete - AIInvigilator'
+                message_body = (
+                    f"Dear {teacher_user.get_full_name() or teacher_user.username},\n\n"
+                    f"The examination cell has completed a malpractice review session.\n\n"
+                    f"Review Summary:\n"
+                    f"- Lecture Hall: {hall_obj.building} - {hall_obj.hall_name}\n"
+                    f"- Date: {session.session_date}\n"
+                    f"- Total Logs Reviewed: {session.logs_reviewed}\n"
+                    f"- Logs Flagged as Malpractice: {session.logs_flagged}\n\n"
+                    f"You can now view the flagged malpractice logs in your Malpractice Log section "
+                    f"on the AIInvigilator portal.\n\n"
+                    f"Please review the evidence and take appropriate action.\n\n"
+                    f"Best regards,\nAIInvigilator System"
+                )
+
+                try:
+                    send_mail(subject, message_body, settings.EMAIL_HOST_USER,
+                              [teacher_user.email], fail_silently=False)
+                    session.email_sent = True
+                    session.save()
+                    print(f"[INFO] Review session email sent to {teacher_user.email}")
+                except Exception as e:
+                    print(f"[ERROR] Failed to send review email: {e}")
+
+                # Send SMS if available
+                try:
+                    teacher_profile = teacher_user.teacherprofile
+                    if teacher_profile and teacher_profile.phone:
+                        sms_body = (
+                            f"AIInvigilator: Review complete for {hall_obj.building}-{hall_obj.hall_name}. "
+                            f"{session.logs_flagged} malpractice case(s) found out of {session.logs_reviewed} reviewed. "
+                            f"Check portal for details."
+                        )
+                        send_sms_notification(f"+91{teacher_profile.phone.strip()}", sms_body)
+                except Exception as e:
+                    print(f"[ERROR] SMS notification failed: {e}")
+
+            except Exception as e:
+                print(f"[ERROR] Review email background task failed: {e}")
+
+        email_thread = Thread(target=send_review_email, args=(review_session.id,))
+        email_thread.daemon = True
+        email_thread.start()
+
+        return JsonResponse({
+            'success': True,
+            'session_id': review_session.id,
+            'logs_reviewed': total_reviewed,
+            'logs_flagged': flagged_count,
+            'message': f'Review complete. {flagged_count} malpractice log(s) shared with teacher. Email notification sent.'
+        })
+
+    except User.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Teacher not found'})
+    except LectureHall.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Lecture hall not found'})
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'})
+    except Exception as e:
+        print(f"[EXCEPTION] complete_review_session error: {e}")
         return JsonResponse({'success': False, 'error': 'Internal server error'})
 
 
@@ -627,6 +749,7 @@ def ai_bulk_action(request):
             for log in high_prob_logs:
                 log.verified = True
                 log.is_malpractice = True
+                log.teacher_visible = True
                 log.save()
                 
                 if log.lecture_hall and log.lecture_hall.assigned_teacher:
@@ -903,6 +1026,12 @@ def run_cameras_page(request):
     return render(request, 'run_cameras.html')
 
 
+@login_required
+def teacher_cameras_page(request):
+    """Render teacher camera page (non-admin)"""
+    return render(request, 'teacher_cameras.html')
+
+
 
 @login_required
 @user_passes_test(lambda u: u.is_superuser) 
@@ -1008,8 +1137,9 @@ def stop_camera_scripts(request):
 
 @login_required
 def upload_video(request):
-    """Render the video upload page"""
-    return render(request, 'upload_video.html')
+    """Render the video upload page with dynamic lecture halls"""
+    halls = LectureHall.objects.all().order_by('building', 'hall_name')
+    return render(request, 'upload_video.html', {'lecture_halls': halls})
 
 
 # Store video processing sessions
