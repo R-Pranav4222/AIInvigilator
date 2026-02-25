@@ -34,7 +34,7 @@ urlpatterns = [
     path('upload_video/', views.upload_video, name='upload_video'),
     path('process_video/', views.process_video, name='process_video'),
     path('stream_video_processing/<str:session_id>/', views.stream_video_processing, name='stream_video_processing'),
-]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

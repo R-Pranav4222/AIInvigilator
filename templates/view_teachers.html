@@ -57,7 +57,7 @@
             <select name="building" class="form-control" id="building">
               <option value="">All Buildings</option>
               {% for b in buildings %}
-                <option value="{{ b }}" {% if selected_building == b %}selected{% endif %}>{{ b }}</option>
+                <option value="{{ b }}" {% if building_filter == b %}selected{% endif %}>{{ b }}</option>
               {% endfor %}
             </select>
           </div>

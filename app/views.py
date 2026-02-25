@@ -112,7 +112,7 @@ def teacher_register(request):
         username = request.POST.get('username')
         password = request.POST.get('password')
         phone = request.POST.get('phone')
-        profile_picture = request.FILES['profile_picture']
+        profile_picture = request.FILES.get('profile_picture')
 
         # Create User
         user = User.objects.create_user(
@@ -124,7 +124,9 @@ def teacher_register(request):
         )
 
         # Save profile
-        profile = TeacherProfile(user=user, phone=phone, profile_picture=profile_picture)
+        profile = TeacherProfile(user=user, phone=phone)
+        if profile_picture:
+            profile.profile_picture = profile_picture
         profile.save()
 
         return redirect('login')  # Or any success page
@@ -996,6 +998,7 @@ def manage_lecture_halls(request):
 def view_teachers(request):
     assigned_filter = request.GET.get('assigned', '')
     building_filter = request.GET.get('building', '')
+    query = request.GET.get('q', '').strip()
 
     # Use the reverse relation "lecturehall" (LectureHall.assigned_teacher) 
     teachers = User.objects.filter(is_superuser=False).select_related('lecturehall')
@@ -1009,11 +1012,20 @@ def view_teachers(request):
     if building_filter:
         teachers = teachers.filter(lecturehall__building=building_filter)
 
+    if query:
+        teachers = teachers.filter(
+            Q(username__icontains=query) |
+            Q(first_name__icontains=query) |
+            Q(last_name__icontains=query) |
+            Q(email__icontains=query)
+        )
+
     context = {
         'teachers': teachers,
         'buildings': buildings,
         'assigned_filter': assigned_filter,
         'building_filter': building_filter,
+        'query': query,
     }
     return render(request, 'view_teachers.html', context)
 

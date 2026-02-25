@@ -93,7 +93,7 @@ class ReviewSession(models.Model):
 class TeacherProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     phone = models.CharField(max_length=20)
-    profile_picture = models.ImageField(upload_to='profile_pics/')
+    profile_picture = models.ImageField(upload_to='profile_pics/', blank=True, null=True)
     lecture_hall = models.OneToOneField(LectureHall, on_delete=models.SET_NULL, null=True, blank=True)
     is_online = models.BooleanField(default=False)
     last_seen = models.DateTimeField(null=True, blank=True)
