@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from channels.generic.websocket import AsyncWebSocketConsumer, AsyncJsonWebSocketConsumer
+from channels.generic.websocket import AsyncWebsocketConsumer, AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -22,7 +22,7 @@ ml_executor = ThreadPoolExecutor(max_workers=3)
 ACTIVE_STREAMS = {}  # {teacher_id: {'channel_name': ..., 'hall_id': ...}}
 
 
-class NotificationConsumer(AsyncJsonWebSocketConsumer):
+class NotificationConsumer(AsyncJsonWebsocketConsumer):
     """
     Handles real-time notifications between admin and teachers:
     - Camera start/stop requests (admin → teacher)
@@ -528,7 +528,7 @@ class NotificationConsumer(AsyncJsonWebSocketConsumer):
         )
 
 
-class CameraStreamConsumer(AsyncWebSocketConsumer):
+class CameraStreamConsumer(AsyncWebsocketConsumer):
     """
     Handles teacher webcam streaming:
     - Teacher sends JPEG frames from browser webcam
@@ -742,7 +742,7 @@ class CameraStreamConsumer(AsyncWebSocketConsumer):
             return None
 
 
-class AdminGridConsumer(AsyncWebSocketConsumer):
+class AdminGridConsumer(AsyncWebsocketConsumer):
     """
     Admin receives raw camera frames from all active teacher streams.
     Provides grid view of all active cameras.
