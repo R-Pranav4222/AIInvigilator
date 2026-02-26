@@ -21,6 +21,10 @@ ml_executor = ThreadPoolExecutor(max_workers=3)
 # Global state for active streams
 ACTIVE_STREAMS = {}  # {teacher_id: {'channel_name': ..., 'hall_id': ...}}
 
+# Direct admin grid senders — bypass channel layer for high-frequency frame data
+# {channel_name: send_func}  where send_func is the consumer's async send method
+ADMIN_GRID_SENDERS = {}
+
 
 class NotificationConsumer(AsyncJsonWebsocketConsumer):
     """
@@ -535,7 +539,8 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
     - Server processes frames with ML detection
     - Only ML-annotated frames sent back to teacher (teacher shows raw webcam locally)
     - Raw frames forwarded to admin grid
-    - Uses frame-dropping: only the LATEST frame is processed (no queue buildup)
+    - Video clips recorded with pre-roll + grace period for proof
+    - Uses frame-dropping for ML, but ALL frames are buffered for video recording
     """
 
     async def connect(self):
@@ -566,7 +571,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.stream_group, self.channel_name)
         await self.accept()
 
-        # Initialize frame processor (lazy load)
+        # Initialize frame processor (eager init in background thread)
         self.frame_processor = None
         self.frame_count = 0
         self.admin_frame_count = 0
@@ -575,6 +580,9 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         # Frame-dropping: latest frame buffer + ML busy flag
         self._latest_frame = None
         self._ml_busy = False
+
+        # Start initializing ML processor in background
+        asyncio.ensure_future(self._init_processor_background())
 
         # Notify admin that stream started
         await self.channel_layer.group_send(
@@ -590,6 +598,26 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         if hasattr(self, 'teacher_id'):
+            # Finalize any active recordings before disconnect
+            if self.frame_processor:
+                try:
+                    loop = asyncio.get_event_loop()
+                    completed = await loop.run_in_executor(
+                        ml_executor, self.frame_processor.finalize_all_recordings
+                    )
+                    for detection in completed:
+                        saved = await self.save_detection(detection)
+                        if saved:
+                            await self.channel_layer.group_send(
+                                'admin_notifications',
+                                {
+                                    'type': 'malpractice.alert',
+                                    'detection': saved,
+                                }
+                            )
+                except Exception as e:
+                    logger.error(f"Error finalizing recordings on disconnect: {e}")
+
             ACTIVE_STREAMS.pop(self.teacher_id, None)
 
             # Notify admin that stream ended
@@ -606,63 +634,68 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
     async def receive(self, bytes_data=None, text_data=None):
         """Receive frame data from teacher's webcam"""
         if bytes_data:
-            # Binary frame data (JPEG)
             await self.process_frame(bytes_data)
         elif text_data:
             data = json.loads(text_data)
             if data.get('type') == 'frame':
-                # Base64 encoded frame
                 frame_bytes = base64.b64decode(data['data'])
                 await self.process_frame(frame_bytes)
             elif data.get('type') == 'stop':
                 self.detection_active = False
 
     async def process_frame(self, frame_bytes):
-        """Process a webcam frame — frame-dropping architecture for zero lag"""
+        """Process a webcam frame — buffer ALL frames, ML with frame-dropping"""
         self.frame_count += 1
 
-        # Always store the latest frame (overwrites previous, no queue)
+        # Always store the latest frame for ML (overwrites previous)
         self._latest_frame = frame_bytes
 
-        # Forward frame to admin grid (every 3rd frame = ~10fps for smooth admin view)
-        self.admin_frame_count += 1
-        if self.admin_frame_count % 3 == 0:
-            raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
-            await self.channel_layer.group_send(
-                'admin_camera_grid',
-                {
-                    'type': 'camera.frame',
-                    'teacher_id': self.teacher_id,
-                    'teacher_name': ACTIVE_STREAMS.get(self.teacher_id, {}).get('teacher_name', ''),
-                    'lecture_hall': ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', ''),
-                    'frame': raw_b64,
-                }
+        # Buffer EVERY frame for video recording (quick operation)
+        if self.frame_processor:
+            loop = asyncio.get_event_loop()
+            asyncio.ensure_future(
+                loop.run_in_executor(ml_executor, self.frame_processor.buffer_frame, frame_bytes)
             )
 
+        # Forward frame to admin grid DIRECTLY (bypass channel layer for speed)
+        self.admin_frame_count += 1
+        if self.admin_frame_count % 3 == 0 and ADMIN_GRID_SENDERS:
+            raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
+            msg = json.dumps({
+                'type': 'camera_frame',
+                'teacher_id': self.teacher_id,
+                'teacher_name': ACTIVE_STREAMS.get(self.teacher_id, {}).get('teacher_name', ''),
+                'lecture_hall': ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', ''),
+                'frame': raw_b64,
+            })
+            # Send to all connected admin grid consumers
+            dead_channels = []
+            for ch_name, send_func in list(ADMIN_GRID_SENDERS.items()):
+                try:
+                    await send_func(text_data=msg)
+                except Exception:
+                    dead_channels.append(ch_name)
+            for ch in dead_channels:
+                ADMIN_GRID_SENDERS.pop(ch, None)
+
         # ML processing: only if not already busy (frame-dropping)
-        # This ensures we always process the LATEST frame, never a stale queued one
-        if self.detection_active and not self._ml_busy:
+        if self.detection_active and not self._ml_busy and self.frame_processor:
             self._ml_busy = True
             asyncio.ensure_future(self._run_ml_processing())
 
     async def _run_ml_processing(self):
-        """Run ML on the latest frame, drop stale frames"""
+        """Run ML on the latest frame, handle completed detections with video proof"""
         try:
-            # Lazy init frame processor
-            if self.frame_processor is None:
-                self.frame_processor = await self.init_frame_processor()
-
             if not self.frame_processor:
                 self._ml_busy = False
                 return
 
-            # Grab the LATEST frame (may be newer than when we were called)
             frame_bytes = self._latest_frame
             if frame_bytes is None:
                 self._ml_busy = False
                 return
 
-            # Process in thread pool to not block event loop
+            # Process in thread pool (ML inference + recording management)
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 ml_executor,
@@ -671,24 +704,20 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
             )
 
             if result:
-                # Send annotated frame back to teacher
+                # Send annotated frame back to teacher (overlay on their local webcam view)
                 await self.send(bytes_data=result['annotated_frame'])
 
-                # If malpractice detected, save snapshot + notify
+                # Handle completed detections (video clip recordings that finished)
                 if result.get('detections'):
                     for detection in result['detections']:
-                        # Save annotated frame as proof snapshot
-                        proof_filename = await self.save_proof_snapshot(
-                            result['annotated_frame'], detection.get('action', 'Unknown')
-                        )
-                        detection['proof'] = proof_filename
                         saved = await self.save_detection(detection)
                         if saved:
-                            # Send detection info to teacher as JSON
+                            # Notify teacher with detection info
                             await self.send(text_data=json.dumps({
                                 'type': 'detection',
                                 'action': detection.get('action', ''),
                                 'probability': detection.get('probability', 0),
+                                'proof': detection.get('proof', ''),
                             }))
                             # Notify admin in real-time
                             await self.channel_layer.group_send(
@@ -703,8 +732,20 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         finally:
             self._ml_busy = False
 
-    async def init_frame_processor(self):
-        """Initialize ML frame processor"""
+    async def _init_processor_background(self):
+        """Initialize ML frame processor in background thread"""
+        try:
+            loop = asyncio.get_event_loop()
+            self.frame_processor = await loop.run_in_executor(
+                ml_executor, self._create_frame_processor
+            )
+            if self.frame_processor:
+                logger.info(f"Frame processor ready for teacher {self.teacher_id}")
+        except Exception as e:
+            logger.error(f"Failed to init frame processor: {e}")
+
+    def _create_frame_processor(self):
+        """Create FrameProcessor instance (runs in thread pool)"""
         try:
             import sys
             import os
@@ -715,37 +756,13 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
 
             from frame_processor import FrameProcessor
             hall_name = ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', 'Unknown')
-            processor = FrameProcessor(
+            return FrameProcessor(
                 lecture_hall=hall_name,
                 teacher_id=self.teacher_id
             )
-            return processor
         except Exception as e:
-            logger.error(f"Failed to init frame processor: {e}")
+            logger.error(f"Failed to create frame processor: {e}")
             return None
-
-    @database_sync_to_async
-    def save_proof_snapshot(self, annotated_bytes, action_name):
-        """Save the annotated frame as a JPEG proof snapshot"""
-        try:
-            import os
-            from django.conf import settings
-            proof_dir = os.path.join(settings.MEDIA_ROOT, 'live_proofs')
-            os.makedirs(proof_dir, exist_ok=True)
-
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-            safe_action = action_name.replace(' ', '_').lower()
-            filename = f'live_{self.teacher_id}_{safe_action}_{timestamp}.jpg'
-            filepath = os.path.join(proof_dir, filename)
-
-            with open(filepath, 'wb') as f:
-                f.write(annotated_bytes)
-
-            # Return relative path for storage in DB (relative to MEDIA_ROOT)
-            return f'live_proofs/{filename}'
-        except Exception as e:
-            logger.error(f"Failed to save proof snapshot: {e}")
-            return ''
 
     @database_sync_to_async
     def get_active_session(self):
@@ -764,7 +781,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def save_detection(self, detection):
-        """Save malpractice detection to database"""
+        """Save malpractice detection to database with video proof"""
         try:
             now = timezone.now()
             session_info = ACTIVE_STREAMS.get(self.teacher_id, {})
@@ -781,13 +798,14 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 probability_score=detection.get('probability', 0),
                 source_type='live',
                 uploaded_by=self.user,
-                teacher_visible=False,  # Needs admin review first
+                teacher_visible=False,
             )
             return {
                 'id': log.id,
                 'date': str(log.date),
                 'time': str(log.time),
                 'malpractice': log.malpractice,
+                'proof': log.proof,
                 'lecture_hall': str(hall) if hall else 'Unknown',
                 'probability_score': log.probability_score,
                 'source_type': 'live',
@@ -814,6 +832,9 @@ class AdminGridConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.admin_grid_group, self.channel_name)
         await self.accept()
 
+        # Register for DIRECT frame sends (bypasses channel layer for speed)
+        ADMIN_GRID_SENDERS[self.channel_name] = self.send
+
         # Send list of currently active streams
         await self.send(text_data=json.dumps({
             'type': 'active_streams',
@@ -829,6 +850,8 @@ class AdminGridConsumer(AsyncWebsocketConsumer):
         }))
 
     async def disconnect(self, close_code):
+        # Unregister from direct frame sends
+        ADMIN_GRID_SENDERS.pop(self.channel_name, None)
         if hasattr(self, 'admin_grid_group'):
             await self.channel_layer.group_discard(self.admin_grid_group, self.channel_name)
 

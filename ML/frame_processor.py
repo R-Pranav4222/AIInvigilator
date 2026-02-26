@@ -11,7 +11,9 @@ import cv2
 import numpy as np
 import logging
 import time
+import shutil
 import threading
+from collections import deque
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -178,6 +180,37 @@ def detect_passing_paper(wrists, keypoints_list):
 
 
 # ========================
+# SMART PHONE/CALCULATOR FILTER
+# ========================
+
+def is_likely_phone(x1, y1, x2, y2, conf, frame_width, frame_height):
+    """Smart filter to distinguish mobile phones from calculators/remotes.
+    
+    Returns: (is_phone: bool, reason: str)
+    """
+    box_w = x2 - x1
+    box_h = y2 - y1
+    area = box_w * box_h
+    frame_area = frame_width * frame_height
+    area_ratio = area / frame_area if frame_area > 0 else 0
+    aspect = box_w / box_h if box_h > 0 else 1.0
+
+    # Too large at low confidence
+    if area_ratio > 0.05 and conf < 0.45:
+        return False, f"too large ({area_ratio:.1%}) at low conf {conf:.2f}"
+
+    # Square + large + low confidence = likely calculator
+    if 0.7 < aspect < 1.4 and area_ratio > 0.02 and conf < 0.40:
+        return False, f"likely calculator (aspect:{aspect:.2f})"
+
+    # Extremely large object
+    if area_ratio > 0.10:
+        return False, f"extremely large ({area_ratio:.1%})"
+
+    return True, f"phone-like (aspect:{aspect:.2f}, area:{area_ratio:.2%}, conf:{conf:.2f})"
+
+
+# ========================
 # MOBILE CLASS ID
 # ========================
 try:
@@ -195,19 +228,36 @@ except Exception:
 class FrameProcessor:
     """
     Processes individual frames for malpractice detection.
-    Maintains per-stream state for consecutive frame thresholds.
+    Records video clips with pre-roll buffer and grace period (matching recorded video pipeline).
     Thread-safe: each teacher stream gets its own FrameProcessor instance.
     """
 
-    # Thresholds (consecutive frames needed)
+    # Detection thresholds (consecutive ML frames needed to START recording)
     LEANING_THRESHOLD = 3
-    MOBILE_THRESHOLD = 5
+    MOBILE_THRESHOLD = 3
     TURNING_THRESHOLD = 3
     PASSING_THRESHOLD = 3
     HAND_RAISE_THRESHOLD = 5
 
-    # Cooldown: minimum seconds between same-type detections
-    DETECTION_COOLDOWN = 30
+    # Video recording config
+    INPUT_FPS = 15              # Expected webcam FPS from browser
+    PRE_ROLL_SECONDS = 1.5      # Buffered seconds before detection
+    GRACE_FRAMES = 45           # Frames after detection stops before finalizing (~3s at 15fps)
+
+    # COCO skeleton connection pairs
+    SKELETON_PAIRS = [
+        (0, 1), (0, 2), (1, 3), (2, 4),       # head
+        (5, 6),                                  # shoulders
+        (5, 7), (7, 9),                          # left arm
+        (6, 8), (8, 10),                         # right arm
+        (5, 11), (6, 12),                        # torso
+        (11, 12),                                # hips
+        (11, 13), (13, 15),                      # left leg
+        (12, 14), (14, 16),                      # right leg
+    ]
+
+    # Action keys (must match names used in DB)
+    ACTION_KEYS = ['Leaning', 'Turning Back', 'Hand Raised', 'Passing Paper', 'Mobile Phone Detected']
 
     def __init__(self, lecture_hall='Unknown', teacher_id=None):
         self.lecture_hall = lecture_hall
@@ -223,27 +273,204 @@ class FrameProcessor:
         self.passing_frames = 0
         self.hand_raise_frames = 0
 
-        # Last detection timestamps (for cooldown)
-        self.last_detections = {}
-
         # Frame counter
         self.frame_num = 0
 
-        # Smart phone/calculator filter
-        self.phone_detections = 0
-        self.calculator_detections = 0
+        # === VIDEO RECORDING STATE ===
+        self._recording_lock = threading.Lock()
+        pre_roll_count = int(self.PRE_ROLL_SECONDS * self.INPUT_FPS)
+        self._pre_roll_buffer = deque(maxlen=max(pre_roll_count, 10))
+
+        # Per-action recording state
+        self._recordings = {}
+        for action in self.ACTION_KEYS:
+            self._recordings[action] = {
+                'active': False,
+                'writer': None,
+                'temp_path': '',
+                'grace_frames': 0,
+                'det_frames': 0,        # Frames with active detection
+                'total_frames': 0,      # Total frames in recording
+                'conf_sum': 0.0,
+                'conf_count': 0,
+            }
+
+        # Completed detections (consumed by caller)
+        self._completed_detections = []
+
+        # Paths
+        self._ml_dir = os.path.dirname(os.path.abspath(__file__))
+        # media root: go up from ML/ to project root, then media/
+        self._media_root = os.path.join(os.path.dirname(self._ml_dir), 'media')
+
+        logger.info(f"FrameProcessor init: hall={lecture_hall}, teacher={teacher_id}, "
+                     f"pre_roll={pre_roll_count} frames, grace={self.GRACE_FRAMES} frames")
+
+    # ===========================
+    # FRAME BUFFERING (called for EVERY incoming frame)
+    # ===========================
+
+    def buffer_frame(self, jpeg_bytes):
+        """
+        Buffer a raw JPEG frame for video recording.
+        Called for EVERY incoming frame (even those not ML-processed).
+        Writes to active VideoWriters for smooth video.
+        """
+        with self._recording_lock:
+            # Always add to pre-roll buffer (raw JPEG bytes)
+            self._pre_roll_buffer.append(jpeg_bytes)
+
+            # Write to all active recordings
+            frame = None
+            for action, rec in self._recordings.items():
+                if rec['active'] and rec['writer'] is not None:
+                    if frame is None:
+                        nparr = np.frombuffer(jpeg_bytes, np.uint8)
+                        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if frame is None:
+                            return
+                    rec['writer'].write(frame)
+                    rec['total_frames'] += 1
+
+    # ===========================
+    # RECORDING MANAGEMENT
+    # ===========================
+
+    def _start_recording(self, action, frame_width, frame_height):
+        """Start video recording for an action — flush pre-roll buffer."""
+        rec = self._recordings[action]
+        if rec['active']:
+            return
+
+        safe_action = action.replace(' ', '_').lower()
+        temp_path = os.path.join(self._ml_dir, f'temp_live_{safe_action}_{self.teacher_id}.mp4')
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(temp_path, fourcc, self.INPUT_FPS, (frame_width, frame_height))
+
+        if not writer.isOpened():
+            logger.error(f"Failed to open VideoWriter for {action} at {temp_path}")
+            return
+
+        # Flush pre-roll buffer (decode JPEG → write to video)
+        pre_roll_count = 0
+        for jpeg in self._pre_roll_buffer:
+            nparr = np.frombuffer(jpeg, np.uint8)
+            f = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if f is not None:
+                h, w = f.shape[:2]
+                if w != frame_width or h != frame_height:
+                    f = cv2.resize(f, (frame_width, frame_height))
+                writer.write(f)
+                pre_roll_count += 1
+
+        rec['active'] = True
+        rec['writer'] = writer
+        rec['temp_path'] = temp_path
+        rec['grace_frames'] = 0
+        rec['det_frames'] = 0
+        rec['total_frames'] = pre_roll_count
+        rec['conf_sum'] = 0.0
+        rec['conf_count'] = 0
+
+        logger.info(f"Recording STARTED: {action} (pre-roll: {pre_roll_count} frames)")
+
+    def _finalize_recording(self, action):
+        """Stop recording and save video to media directory. Returns detection dict or None."""
+        rec = self._recordings[action]
+        if not rec['active']:
+            return None
+
+        rec['active'] = False
+        if rec['writer']:
+            rec['writer'].release()
+            rec['writer'] = None
+
+        temp_path = rec['temp_path']
+        total_frames = rec['total_frames']
+
+        if not os.path.exists(temp_path) or total_frames < 5:
+            # Too short — discard
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+            self._reset_recording_state(action)
+            return None
+
+        # Copy to media directory
+        os.makedirs(self._media_root, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_action = action.replace(' ', '_').lower()
+        filename = f'live_{safe_action}_{self.teacher_id}_{timestamp}.mp4'
+        final_path = os.path.join(self._media_root, filename)
+
+        try:
+            shutil.copy(temp_path, final_path)
+        except Exception as e:
+            logger.error(f"Failed to copy recording {temp_path} → {final_path}: {e}")
+            self._reset_recording_state(action)
+            return None
+
+        # Calculate probability score
+        probability = self._calc_probability_video(
+            action, rec['det_frames'], total_frames,
+            rec['conf_sum'] / rec['conf_count'] if rec['conf_count'] > 0 else 0.0
+        )
+
+        # Cleanup temp file
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
+        det_frames = rec['det_frames']
+        self._reset_recording_state(action)
+
+        logger.info(f"Recording SAVED: {action} → {filename} "
+                     f"({total_frames} frames, {det_frames} detection frames, prob={probability}%)")
+
+        return {
+            'action': action,
+            'proof': filename,
+            'probability': probability,
+        }
+
+    def _reset_recording_state(self, action):
+        """Reset a single action's recording counters."""
+        rec = self._recordings[action]
+        rec['grace_frames'] = 0
+        rec['det_frames'] = 0
+        rec['total_frames'] = 0
+        rec['conf_sum'] = 0.0
+        rec['conf_count'] = 0
+
+    def finalize_all_recordings(self):
+        """Finalize all active recordings — called on stream disconnect."""
+        completed = []
+        with self._recording_lock:
+            for action in self.ACTION_KEYS:
+                result = self._finalize_recording(action)
+                if result:
+                    completed.append(result)
+        return completed
+
+    # ===========================
+    # ML FRAME PROCESSING
+    # ===========================
 
     def process_frame(self, frame_bytes):
         """
-        Process a single JPEG frame.
+        Process a single JPEG frame with ML detection.
 
-        Args:
-            frame_bytes: Raw JPEG bytes from webcam
+        Called by the consumer's ML thread (with frame-dropping).
+        Manages recording state based on detections.
 
         Returns:
             dict with:
-                - annotated_frame: JPEG bytes of frame with detection overlays
-                - detections: list of detected malpractice events (may be empty)
+                - annotated_frame: JPEG bytes with detection overlays
+                - detections: list of COMPLETED detections (with video proof)
             or None on error
         """
         try:
@@ -254,7 +481,8 @@ class FrameProcessor:
                 return None
 
             self.frame_num += 1
-            detections = []
+            h_frame, w_frame = frame.shape[:2]
+            completed_detections = []
             annotated = frame.copy()
 
             # ---- YOLO Pose Detection ----
@@ -269,7 +497,6 @@ class FrameProcessor:
                         kp = kp_data.cpu().numpy()
                         if len(kp) >= 11:
                             all_keypoints.append(kp)
-                            # Extract wrists for passing paper detection
                             l_wrist = tuple(kp[9][:2])
                             r_wrist = tuple(kp[10][:2])
                             all_wrists.append((l_wrist, r_wrist))
@@ -279,7 +506,6 @@ class FrameProcessor:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                         conf = float(box.conf[0])
                         all_boxes.append((x1, y1, x2, y2, conf))
-                        # Draw person bounding box
                         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
             # ---- Per-person behavior detection ----
@@ -288,10 +514,11 @@ class FrameProcessor:
             hand_raise_detected = False
 
             for kp in all_keypoints:
-                if is_leaning(kp):
-                    leaning_detected = True
+                # Turning back check FIRST (priority over leaning — mutual exclusion)
                 if is_turning_back(kp):
                     turning_detected = True
+                elif is_leaning(kp):
+                    leaning_detected = True
                 if is_hand_raised(kp):
                     hand_raise_detected = True
 
@@ -300,54 +527,42 @@ class FrameProcessor:
             if len(all_wrists) >= 2:
                 passing_detected, _ = detect_passing_paper(all_wrists, [])
 
-            # ---- YOLO Object Detection (mobile phone) ----
+            # ---- YOLO Object Detection (mobile phone) with smart filter ----
             mobile_detected = False
-            obj_results = _mobile_model(frame, verbose=False, conf=0.3)
+            mobile_conf = 0.0
+            obj_results = _mobile_model(frame, verbose=False, conf=0.25)
 
             for result in obj_results:
                 if result.boxes is not None:
                     for box in result.boxes:
                         cls_id = int(box.cls[0])
                         conf = float(box.conf[0])
-                        if cls_id == MOBILE_CLASS_ID and conf > 0.35:
-                            # Smart filter: skip calculators (aspect ratio check)
+                        if cls_id == MOBILE_CLASS_ID and conf > 0.25:
                             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                            w = x2 - x1
-                            h = y2 - y1
-                            aspect = h / w if w > 0 else 0
-                            # Phones are typically taller than wide (aspect > 1.3)
-                            # or wider than tall for horizontal hold (aspect < 0.7)
-                            if 0.3 < aspect < 3.0:
-                                mobile_detected = True
-                                # Draw mobile detection with thick orange box
-                                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 3)
-                                label = f"PHONE {conf:.0%}"
-                                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-                                cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw, y1), (0, 165, 255), -1)
-                                cv2.putText(annotated, label,
-                                            (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.8, (255, 255, 255), 2)
+
+                            # Smart phone/calculator filter
+                            is_phone, reason = is_likely_phone(x1, y1, x2, y2, conf, w_frame, h_frame)
+                            if not is_phone:
+                                continue
+
+                            mobile_detected = True
+                            mobile_conf = max(mobile_conf, conf)
+
+                            # Draw mobile detection with thick orange box
+                            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 165, 255), 3)
+                            label = f"PHONE {conf:.0%}"
+                            (tw, th_t), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+                            cv2.rectangle(annotated, (x1, y1 - th_t - 10), (x1 + tw, y1), (0, 165, 255), -1)
+                            cv2.putText(annotated, label,
+                                        (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX,
+                                        0.8, (255, 255, 255), 2)
 
             # ---- Draw skeleton keypoints and limb connections ----
-            # COCO skeleton connection pairs (index pairs for drawing lines)
-            SKELETON_PAIRS = [
-                (0, 1), (0, 2), (1, 3), (2, 4),       # head
-                (5, 6),                                  # shoulders
-                (5, 7), (7, 9),                          # left arm
-                (6, 8), (8, 10),                         # right arm
-                (5, 11), (6, 12),                        # torso
-                (11, 12),                                # hips
-                (11, 13), (13, 15),                      # left leg
-                (12, 14), (14, 16),                      # right leg
-            ]
-
-            # Color scheme: green=normal, red=leaning, cyan=hand raised, magenta=turning
             for person_idx, kp in enumerate(all_keypoints):
                 person_leaning = is_leaning(kp)
                 person_turning = is_turning_back(kp)
                 person_hand_raised = is_hand_raised(kp)
 
-                # Choose color based on detected action
                 if person_leaning:
                     color = (0, 0, 255)       # Red
                 elif person_turning:
@@ -355,23 +570,22 @@ class FrameProcessor:
                 elif person_hand_raised:
                     color = (0, 255, 255)     # Cyan
                 else:
-                    color = (0, 255, 0)       # Green (normal)
+                    color = (0, 255, 0)       # Green
 
-                # Draw skeleton limb connections
-                for (i, j) in SKELETON_PAIRS:
+                # Skeleton limb connections
+                for (i, j) in self.SKELETON_PAIRS:
                     if i < len(kp) and j < len(kp):
                         x1, y1 = int(kp[i][0]), int(kp[i][1])
                         x2, y2 = int(kp[j][0]), int(kp[j][1])
                         if x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:
                             cv2.line(annotated, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
 
-                # Draw keypoint circles (larger, colored)
+                # Keypoint circles
                 for idx, point in enumerate(kp[:17]):
                     x, y = int(point[0]), int(point[1])
                     if x > 0 and y > 0:
-                        # Wrists get special treatment for passing paper
                         if idx in (9, 10) and passing_detected:
-                            cv2.circle(annotated, (x, y), 6, (255, 0, 0), -1)  # Blue for passing
+                            cv2.circle(annotated, (x, y), 6, (255, 0, 0), -1)
                             cv2.circle(annotated, (x, y), 8, (255, 0, 0), 2)
                         else:
                             cv2.circle(annotated, (x, y), 5, color, -1)
@@ -383,92 +597,96 @@ class FrameProcessor:
             self.passing_frames = self.passing_frames + 1 if passing_detected else 0
             self.mobile_frames = self.mobile_frames + 1 if mobile_detected else 0
 
-            # ---- Check thresholds and emit detections ----
-            now = time.time()
+            # ---- Recording management (lock for thread safety with buffer_frame) ----
+            with self._recording_lock:
+                # Map action → (counter, threshold, detected_flag, confidence)
+                action_map = [
+                    ('Leaning', self.leaning_frames, self.LEANING_THRESHOLD, leaning_detected, 0.0),
+                    ('Turning Back', self.turning_frames, self.TURNING_THRESHOLD, turning_detected, 0.0),
+                    ('Hand Raised', self.hand_raise_frames, self.HAND_RAISE_THRESHOLD, hand_raise_detected, 0.0),
+                    ('Passing Paper', self.passing_frames, self.PASSING_THRESHOLD, passing_detected, 0.0),
+                    ('Mobile Phone Detected', self.mobile_frames, self.MOBILE_THRESHOLD, mobile_detected, mobile_conf),
+                ]
 
-            if self.leaning_frames >= self.LEANING_THRESHOLD:
-                if self._can_detect('Leaning', now):
-                    detections.append({
-                        'action': 'Leaning',
-                        'probability': self._calc_probability('Leaning', self.leaning_frames),
-                        'proof': '',
-                    })
-                    self.leaning_frames = 0
+                for action, counter, threshold, detected, conf in action_map:
+                    rec = self._recordings[action]
 
-            if self.turning_frames >= self.TURNING_THRESHOLD:
-                if self._can_detect('Turning Back', now):
-                    detections.append({
-                        'action': 'Turning Back',
-                        'probability': self._calc_probability('Turning Back', self.turning_frames),
-                        'proof': '',
-                    })
-                    self.turning_frames = 0
+                    if counter >= threshold:
+                        # Detection active — reset grace, start recording if needed
+                        rec['grace_frames'] = 0
+                        if not rec['active']:
+                            self._start_recording(action, w_frame, h_frame)
 
-            if self.hand_raise_frames >= self.HAND_RAISE_THRESHOLD:
-                if self._can_detect('Hand Raised', now):
-                    detections.append({
-                        'action': 'Hand Raised',
-                        'probability': self._calc_probability('Hand Raised', self.hand_raise_frames),
-                        'proof': '',
-                    })
-                    self.hand_raise_frames = 0
+                        # Track detection density
+                        if rec['active'] and detected:
+                            rec['det_frames'] += 1
+                            if conf > 0:
+                                rec['conf_sum'] += conf
+                                rec['conf_count'] += 1
+                            elif all_keypoints:
+                                # Use average keypoint confidence for pose-based detections
+                                kp = all_keypoints[0]
+                                avg_kp_conf = float(np.mean([kp[ki][2] for ki in range(min(len(kp), 17)) if kp[ki][2] > 0]))
+                                rec['conf_sum'] += avg_kp_conf
+                                rec['conf_count'] += 1
+                    else:
+                        # Detection stopped — grace period countdown
+                        if rec['active']:
+                            rec['grace_frames'] += 1
+                            if rec['grace_frames'] >= self.GRACE_FRAMES:
+                                result = self._finalize_recording(action)
+                                if result:
+                                    completed_detections.append(result)
 
-            if self.passing_frames >= self.PASSING_THRESHOLD:
-                if self._can_detect('Passing Paper', now):
-                    detections.append({
-                        'action': 'Passing Paper',
-                        'probability': self._calc_probability('Passing Paper', self.passing_frames),
-                        'proof': '',
-                    })
-                    self.passing_frames = 0
-
-            if self.mobile_frames >= self.MOBILE_THRESHOLD:
-                if self._can_detect('Mobile Phone Detected', now):
-                    detections.append({
-                        'action': 'Mobile Phone Detected',
-                        'probability': self._calc_probability('Mobile Phone Detected', self.mobile_frames),
-                        'proof': '',
-                    })
-                    self.mobile_frames = 0
-
-            # ---- Draw status overlay with background boxes ----
-            h_frame, w_frame = annotated.shape[:2]
-
-            # Detection action flags (top-left, with colored background)
+            # ---- Draw status overlay ----
             action_labels = []
             if leaning_detected:
-                action_labels.append((f"LEANING ({self.leaning_frames})", (0, 0, 255)))
+                status = "REC" if self._recordings['Leaning']['active'] else ""
+                action_labels.append((f"LEANING ({self.leaning_frames}) {status}", (0, 0, 255)))
             if turning_detected:
-                action_labels.append((f"TURNING BACK ({self.turning_frames})", (255, 0, 255)))
+                status = "REC" if self._recordings['Turning Back']['active'] else ""
+                action_labels.append((f"TURNING BACK ({self.turning_frames}) {status}", (255, 0, 255)))
             if hand_raise_detected:
-                action_labels.append((f"HAND RAISED ({self.hand_raise_frames})", (0, 255, 255)))
+                status = "REC" if self._recordings['Hand Raised']['active'] else ""
+                action_labels.append((f"HAND RAISED ({self.hand_raise_frames}) {status}", (0, 255, 255)))
             if passing_detected:
-                action_labels.append((f"PASSING PAPER ({self.passing_frames})", (255, 0, 0)))
+                status = "REC" if self._recordings['Passing Paper']['active'] else ""
+                action_labels.append((f"PASSING PAPER ({self.passing_frames}) {status}", (255, 0, 0)))
             if mobile_detected:
-                action_labels.append((f"MOBILE PHONE ({self.mobile_frames})", (0, 165, 255)))
+                status = "REC" if self._recordings['Mobile Phone Detected']['active'] else ""
+                action_labels.append((f"MOBILE PHONE ({self.mobile_frames}) {status}", (0, 165, 255)))
+
+            # Show recording indicators for actions recording in grace period
+            for action in self.ACTION_KEYS:
+                rec = self._recordings[action]
+                if rec['active'] and not any(action.upper().startswith(label[0].split('(')[0].strip().upper().split()[0]) for label in action_labels):
+                    action_labels.append((f"{action.upper()} (grace {rec['grace_frames']}/{self.GRACE_FRAMES}) REC", (128, 128, 128)))
 
             y_offset = 30
             for text, text_color in action_labels:
-                (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
-                # Semi-transparent background
+                (tw, th_t), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
                 overlay = annotated.copy()
-                cv2.rectangle(overlay, (8, y_offset - th - 4), (16 + tw, y_offset + baseline + 4), (0, 0, 0), -1)
+                cv2.rectangle(overlay, (8, y_offset - th_t - 4), (16 + tw, y_offset + baseline + 4), (0, 0, 0), -1)
                 cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
                 cv2.putText(annotated, text, (12, y_offset),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2, cv2.LINE_AA)
-                y_offset += th + 14
+                y_offset += th_t + 14
 
             # Info overlay (top-right)
+            active_recs = sum(1 for a in self.ACTION_KEYS if self._recordings[a]['active'])
             info_lines = [
                 f"ML Processing",
                 f"People: {len(all_keypoints)}",
             ]
+            if active_recs > 0:
+                info_lines.append(f"Recording: {active_recs}")
+
             for idx_line, info_text in enumerate(info_lines):
-                (tw, th), _ = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                (tw, th_t), _ = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
                 x_pos = w_frame - tw - 12
                 y_pos = 25 + idx_line * 28
                 overlay = annotated.copy()
-                cv2.rectangle(overlay, (x_pos - 4, y_pos - th - 2), (w_frame - 4, y_pos + 6), (0, 0, 0), -1)
+                cv2.rectangle(overlay, (x_pos - 4, y_pos - th_t - 2), (w_frame - 4, y_pos + 6), (0, 0, 0), -1)
                 cv2.addWeighted(overlay, 0.5, annotated, 0.5, 0, annotated)
                 cv2.putText(annotated, info_text, (x_pos, y_pos),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
@@ -479,7 +697,7 @@ class FrameProcessor:
 
             return {
                 'annotated_frame': annotated_bytes,
-                'detections': detections,
+                'detections': completed_detections,
             }
 
         except Exception as e:
@@ -488,16 +706,16 @@ class FrameProcessor:
             traceback.print_exc()
             return None
 
-    def _can_detect(self, action, now):
-        """Check cooldown — avoid flooding with same detection type"""
-        last = self.last_detections.get(action, 0)
-        if now - last >= self.DETECTION_COOLDOWN:
-            self.last_detections[action] = now
-            return True
-        return False
+    # ===========================
+    # PROBABILITY SCORING
+    # ===========================
 
-    def _calc_probability(self, action, consecutive_frames):
-        """Calculate probability score for live detection"""
+    def _calc_probability_video(self, action, detection_frames, total_frames,
+                                 avg_confidence=0.0):
+        """
+        Calculate AI probability score for a video clip detection.
+        Matches the recorded video pipeline's scoring system.
+        """
         type_priors = {
             'Mobile Phone Detected': 0.85,
             'Turning Back': 0.75,
@@ -507,7 +725,27 @@ class FrameProcessor:
         }
         type_score = type_priors.get(action, 0.50)
 
-        # More consecutive frames = higher confidence
+        # Clip duration factor (30%): longer clips = higher confidence
+        clip_duration = total_frames / self.INPUT_FPS if self.INPUT_FPS > 0 else 0
+        if clip_duration >= 10:
+            duration_score = 1.0
+        elif clip_duration >= 5:
+            duration_score = 0.7 + (clip_duration - 5) * 0.06
+        elif clip_duration >= 2:
+            duration_score = 0.4 + (clip_duration - 2) * 0.1
+        else:
+            duration_score = max(0.1, clip_duration * 0.2)
+
+        # Detection density factor (25%): what % of frames had active detection
+        if total_frames > 0 and detection_frames > 0:
+            density = min(detection_frames / total_frames, 1.0)
+        else:
+            density = 0.5
+
+        # Confidence factor (20%)
+        confidence_score = min(avg_confidence, 1.0) if avg_confidence > 0 else 0.65
+
+        # Sustainability factor (15%)
         threshold_map = {
             'Leaning': self.LEANING_THRESHOLD,
             'Mobile Phone Detected': self.MOBILE_THRESHOLD,
@@ -516,8 +754,15 @@ class FrameProcessor:
             'Hand Raised': self.HAND_RAISE_THRESHOLD,
         }
         threshold = threshold_map.get(action, 3)
-        sustainability = min(consecutive_frames / threshold, 5.0) / 5.0
+        sustainability = min(detection_frames / threshold, 5.0) / 5.0
 
-        # Weighted score
-        probability = (type_score * 0.50 + sustainability * 0.35 + 0.65 * 0.15) * 100
+        # Weighted combination
+        probability = (
+            duration_score * 0.30
+            + density * 0.25
+            + confidence_score * 0.20
+            + sustainability * 0.15
+            + type_score * 0.10
+        ) * 100
+
         return round(max(0, min(100, probability)), 1)

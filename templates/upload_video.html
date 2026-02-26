@@ -482,27 +482,21 @@ $(document).ready(function() {
           const $stream = $('#videoStream');
           $stream.off('load error');  // Remove any stale handlers
           
+          // Store session ID for stats polling
+          const currentSessionId = response.session_id;
+          
           $stream.on('load', function() {
-            console.log('Stream started loading');
+            console.log('Stream frame received');
           });
           
           $stream.on('error', function(e) {
-            console.log('Stream ended - showing completion modal');
+            console.log('Stream ended - fetching processing stats');
             
             // Guard against double-firing
             if (!isProcessing) return;
             
-            // Stream ended naturally (expected when processing completes)
-            setTimeout(function() {
-              // Show completion modal
-              $('#completionMessage').text('Video Processing Complete!');
-              $('#completionDetails').html('<i class="fas fa-info-circle"></i> All malpractice detections have been saved to the database.');
-              $('#detectionSummary').html('<p style="margin: 0;"><strong>Check the Malpractice Logs section to view detailed results.</strong></p>');
-              $('#completionModal').modal('show');
-              
-              // Full reset so user can upload another video immediately
-              fullReset();
-            }, 1000);
+            // Stream ended — fetch processing statistics
+            fetchProcessingStats(currentSessionId);
           });
           
           // Set src AFTER binding handlers
@@ -522,6 +516,93 @@ $(document).ready(function() {
       }
     });
   });
+  
+  // Fetch processing statistics and show completion modal
+  function fetchProcessingStats(sessionId) {
+    // Poll for stats (processing thread may still be writing final stats)
+    let pollCount = 0;
+    const maxPolls = 10;
+    
+    function pollStats() {
+      pollCount++;
+      $.ajax({
+        url: '/get_processing_stats/' + sessionId + '/',
+        type: 'GET',
+        headers: { 'X-CSRFToken': csrftoken },
+        success: function(data) {
+          if (data.status === 'completed' || pollCount >= maxPolls) {
+            showCompletionWithStats(data);
+          } else {
+            // Still processing, poll again in 1s
+            setTimeout(pollStats, 1000);
+          }
+        },
+        error: function() {
+          // Stats endpoint failed, show generic completion
+          showCompletionWithStats({
+            status: 'completed',
+            duration: 0,
+            frames_yielded: 0,
+            detections: 0,
+            detection_types: {}
+          });
+        }
+      });
+    }
+    
+    // Small delay to let the backend finalize stats
+    setTimeout(pollStats, 1500);
+  }
+  
+  function showCompletionWithStats(stats) {
+    const duration = stats.duration ? stats.duration.toFixed(1) : '—';
+    const frames = stats.frames_yielded || 0;
+    const detections = stats.detections || 0;
+    const types = stats.detection_types || {};
+    
+    // Build detection types breakdown
+    let typeBreakdown = '';
+    if (Object.keys(types).length > 0) {
+      typeBreakdown = '<div style="text-align:left; margin-top:12px;">';
+      for (const [typeName, count] of Object.entries(types)) {
+        const displayName = typeName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        typeBreakdown += `<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+          <span style="color:var(--text-secondary);">${displayName}</span>
+          <span style="color:var(--danger); font-weight:700;">${count}</span>
+        </div>`;
+      }
+      typeBreakdown += '</div>';
+    } else {
+      typeBreakdown = '<p style="color:var(--success); margin-top:8px;"><i class="fas fa-check-circle"></i> No malpractice detected!</p>';
+    }
+    
+    $('#completionMessage').text('Video Processing Complete!');
+    $('#completionDetails').html(
+      `<i class="fas fa-chart-bar" style="margin-right:6px;"></i> Processing finished in <strong>${duration}s</strong>`
+    );
+    $('#detectionSummary').html(`
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:800; color:var(--accent-cyan);">${duration}<span style="font-size:0.9rem;">s</span></div>
+          <div style="font-size:0.8rem; color:var(--text-muted);">Processing Time</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:800; color:var(--text-primary);">${frames}</div>
+          <div style="font-size:0.8rem; color:var(--text-muted);">Frames Processed</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem; font-weight:800; color:${detections > 0 ? 'var(--danger)' : 'var(--success)'};">${detections}</div>
+          <div style="font-size:0.8rem; color:var(--text-muted);">Detections</div>
+        </div>
+      </div>
+      ${typeBreakdown}
+    `);
+    
+    $('#completionModal').modal('show');
+    
+    // Full reset so user can upload another video immediately
+    fullReset();
+  }
   
   // Format file size
   function formatFileSize(bytes) {

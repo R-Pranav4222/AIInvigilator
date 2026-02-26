@@ -21,6 +21,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.admin.views.decorators import staff_member_required
 from .utils import ssh_run_script, local_run_script
 import threading
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -1267,50 +1268,162 @@ def process_video(request):
 
 @login_required
 def stream_video_processing(request, session_id):
-    """Stream live video processing frames"""
+    """
+    Stream live video processing frames via MJPEG.
+    Uses async generator for proper ASGI (Daphne) streaming support.
+    Sync generators get buffered in ASGI mode — async generators stream correctly.
+    """
     import sys
-    import cv2
     sys.path.append(os.path.join(settings.BASE_DIR, 'ML'))
-    from process_uploaded_video_stream import stream_process_video
-    
+
     # Get session info
     session = VIDEO_SESSIONS.get(session_id)
     if not session:
         return HttpResponse('Session not found', status=404)
-    
+
     # Verify user owns this session
     if session['user_id'] != request.user.id:
         return HttpResponse('Unauthorized', status=403)
-    
-    def generate():
+
+    filepath = session['filepath']
+    lecture_hall_id = session['lecture_hall_id']
+
+    # Initialize processing stats in the session
+    session['stats'] = {
+        'start_time': time.time(),
+        'frames_yielded': 0,
+        'status': 'processing',
+    }
+
+    from concurrent.futures import ThreadPoolExecutor
+    _pool = ThreadPoolExecutor(max_workers=1)
+
+    async def async_generate():
+        """Async generator that bridges the sync ML pipeline to ASGI streaming"""
+        from process_uploaded_video_stream import stream_process_video
+
+        loop = asyncio.get_event_loop()
+        frame_queue = asyncio.Queue(maxsize=30)
+
+        def _run_sync_processing():
+            """Run the heavy sync ML processing in a background thread"""
+            try:
+                for frame_data in stream_process_video(filepath, lecture_hall_id):
+                    # Push frame to async queue (backpressure: blocks if full)
+                    future = asyncio.run_coroutine_threadsafe(
+                        frame_queue.put(frame_data), loop
+                    )
+                    future.result(timeout=30)
+            except Exception as e:
+                print(f"❌ Video processing error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                # Signal end of stream
+                asyncio.run_coroutine_threadsafe(
+                    frame_queue.put(None), loop
+                ).result(timeout=10)
+
+        # Start sync processing in thread pool
+        loop.run_in_executor(_pool, _run_sync_processing)
+
         try:
-            filepath = session['filepath']
-            lecture_hall_id = session['lecture_hall_id']
-            
-            # Process video and yield frames
-            for frame_data in stream_process_video(filepath, lecture_hall_id):
+            while True:
+                frame_data = await frame_queue.get()
+                if frame_data is None:
+                    break
+                session['stats']['frames_yielded'] += 1
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_data + b'\r\n')
-            
-            # Clean up after processing
+        finally:
+            # Update stats on completion
+            session['stats']['end_time'] = time.time()
+            session['stats']['duration'] = round(
+                session['stats']['end_time'] - session['stats']['start_time'], 1
+            )
+            session['stats']['status'] = 'completed'
+
+            # Count detections saved during this session (query DB)
+            try:
+                from .models import MalpraticeDetection
+                from datetime import datetime as dt
+                from asgiref.sync import sync_to_async
+
+                # Get detections created during this processing window
+                start_dt = dt.fromtimestamp(session['stats']['start_time'])
+                hall_id = int(lecture_hall_id) if lecture_hall_id else None
+
+                @sync_to_async
+                def _count_detections():
+                    filters = {
+                        'source_type': 'uploaded',
+                        'date': start_dt.date(),
+                    }
+                    if hall_id:
+                        filters['lecture_hall_id'] = hall_id
+
+                    qs = MalpraticeDetection.objects.filter(
+                        **filters,
+                        time__gte=start_dt.time(),
+                    ).order_by('-id')[:500]
+
+                    count = 0
+                    types = {}
+                    for det in qs:
+                        count += 1
+                        dtype = det.malpractice or 'Unknown'
+                        types[dtype] = types.get(dtype, 0) + 1
+                    return count, types
+
+                det_count, det_types = await _count_detections()
+                session['stats']['detections'] = det_count
+                session['stats']['detection_types'] = det_types
+            except Exception as e:
+                print(f"Stats query error: {e}")
+                session['stats']['detections'] = 0
+                session['stats']['detection_types'] = {}
+
+            # Clean up video file
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
                     print(f"✅ Cleaned up video: {filepath}")
                 except:
                     pass
-            
-            # Remove session
-            VIDEO_SESSIONS.pop(session_id, None)
-            
-        except Exception as e:
-            print(f"❌ Stream error: {e}")
-            import traceback
-            traceback.print_exc()
-    
+
+            print(f"✅ Processing complete: {session['stats']}")
+
     return StreamingHttpResponse(
-        generate(),
+        async_generate(),
         content_type='multipart/x-mixed-replace; boundary=frame'
     )
+
+
+@login_required
+def get_processing_stats(request, session_id):
+    """Return processing statistics for a completed video session"""
+    session = VIDEO_SESSIONS.get(session_id)
+    if not session:
+        return JsonResponse({'status': 'not_found'}, status=404)
+
+    if session.get('user_id') != request.user.id:
+        return JsonResponse({'status': 'unauthorized'}, status=403)
+
+    stats = session.get('stats', {})
+    response_data = {
+        'status': stats.get('status', 'unknown'),
+        'duration': stats.get('duration', 0),
+        'frames_yielded': stats.get('frames_yielded', 0),
+        'detections': stats.get('detections', 0),
+        'detection_types': stats.get('detection_types', {}),
+    }
+
+    # Clean up session if completed (leave it available for 5 minutes)
+    if stats.get('status') == 'completed':
+        end_time = stats.get('end_time', 0)
+        if time.time() - end_time > 300:
+            VIDEO_SESSIONS.pop(session_id, None)
+
+    return JsonResponse(response_data)
 
 

@@ -347,10 +347,10 @@ def save_video_to_database(action, video_filepath, lecture_hall_id,
         cursor = db.cursor()
         
         sql = """INSERT INTO app_malpraticedetection 
-                 (date, time, malpractice, proof, lecture_hall_id, verified, probability_score) 
-                 VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+                 (date, time, malpractice, proof, lecture_hall_id, verified, probability_score, source_type, teacher_visible) 
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
         
-        cursor.execute(sql, (date_str, time_str, action, proof_filename, lecture_hall_id, False, probability))
+        cursor.execute(sql, (date_str, time_str, action, proof_filename, lecture_hall_id, False, probability, 'uploaded', False))
         db.commit()
         cursor.close()
         db.close()
@@ -359,6 +359,51 @@ def save_video_to_database(action, video_filepath, lecture_hall_id,
         print(f"   🎥 Video: {proof_filename}")
         print(f"   🕒 Time: {time_str}")
         print(f"   📊 AI Probability: {probability}%")
+
+        # Send real-time notification to admin via WebSocket channel layer
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                # Get lecture hall name from DB
+                hall_name = str(lecture_hall_id)
+                try:
+                    db2 = mysql.connector.connect(
+                        host="localhost", user=DB_USER,
+                        password=DB_PASSWORD, database=DB_NAME
+                    )
+                    c2 = db2.cursor()
+                    c2.execute(
+                        "SELECT building, hall_name FROM app_lecturehall WHERE id=%s",
+                        (lecture_hall_id,)
+                    )
+                    row = c2.fetchone()
+                    if row:
+                        hall_name = f"{row[0]}-{row[1]}"
+                    c2.close()
+                    db2.close()
+                except:
+                    pass
+
+                async_to_sync(channel_layer.group_send)(
+                    'admin_notifications',
+                    {
+                        'type': 'malpractice.alert',
+                        'detection': {
+                            'malpractice': action,
+                            'probability_score': probability,
+                            'time': time_str,
+                            'lecture_hall': hall_name,
+                            'source_type': 'uploaded',
+                            'proof': proof_filename,
+                        }
+                    }
+                )
+                print(f"   📡 Admin notification sent")
+        except Exception as notif_err:
+            print(f"   ⚠️ Admin notification failed: {notif_err}")
+
         return True
     except Exception as e:
         print(f"❌ Database save error: {e}")
