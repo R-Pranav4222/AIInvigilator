@@ -530,7 +530,7 @@
     const TARGET_FPS = 15;          // 15fps send rate (server does frame-dropping anyway)
     const FRAME_INTERVAL = 1000 / TARGET_FPS;  // ~67ms per frame
     let lastFrameTime = 0;
-    let rafId = null;
+    let sendIntervalId = null;
     let fpsCounter = 0;
     let fpsTimer = 0;
     let currentFps = 0;
@@ -539,17 +539,14 @@
       lastFrameTime = performance.now();
       fpsTimer = lastFrameTime;
       fpsCounter = 0;
-      sendLoop(lastFrameTime);
+      // Use setInterval instead of requestAnimationFrame!
+      // rAF is throttled to 0fps in background tabs (Chrome/Edge).
+      // setInterval is only throttled to 1/sec in background tabs,
+      // so admin still gets ~1 FPS when teacher tab is backgrounded.
+      sendIntervalId = setInterval(sendFrame, FRAME_INTERVAL);
     }
 
-    function sendLoop(timestamp) {
-      rafId = requestAnimationFrame(sendLoop);
-
-      // Throttle to TARGET_FPS
-      const elapsed = timestamp - lastFrameTime;
-      if (elapsed < FRAME_INTERVAL) return;
-      lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
-
+    function sendFrame() {
       if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
       if (video.readyState < 2) return;
 
@@ -562,9 +559,10 @@
 
       // FPS display (update every 30 frames)
       fpsCounter++;
+      const now = performance.now();
       if (fpsCounter >= 30) {
-        currentFps = (fpsCounter / ((timestamp - fpsTimer) / 1000)).toFixed(1);
-        fpsTimer = timestamp;
+        currentFps = (fpsCounter / ((now - fpsTimer) / 1000)).toFixed(1);
+        fpsTimer = now;
         fpsCounter = 0;
         const fpsBadge = document.getElementById('fpsBadge');
         if (fpsBadge) fpsBadge.textContent = currentFps + ' FPS';
@@ -572,13 +570,9 @@
     }
 
     function stopSendingFrames() {
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-      if (sendInterval) {
-        clearInterval(sendInterval);
-        sendInterval = null;
+      if (sendIntervalId) {
+        clearInterval(sendIntervalId);
+        sendIntervalId = null;
       }
     }
 

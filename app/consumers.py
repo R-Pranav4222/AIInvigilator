@@ -805,7 +805,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
     def save_detection(self, detection):
         """Save malpractice detection to database with video proof"""
         try:
-            now = timezone.now()
+            now = timezone.localtime(timezone.now())  # Convert to local timezone (Asia/Kolkata)
             session_info = ACTIVE_STREAMS.get(self.teacher_id, {})
             hall_id = session_info.get('hall_id')
             hall = LectureHall.objects.get(id=hall_id) if hall_id else None

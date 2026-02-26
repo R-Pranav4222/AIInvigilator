@@ -74,9 +74,9 @@ def prewarm_models():
     try:
         _load_models()
         # Run a dummy inference to JIT-compile / warm GPU caches
-        dummy = np.zeros((240, 320, 3), dtype=np.uint8)
-        _pose_model(dummy, verbose=False, imgsz=320)
-        _mobile_model(dummy, verbose=False, imgsz=320)
+        dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+        _pose_model(dummy, verbose=False, imgsz=320)    # Match ML_POSE_IMGSZ
+        _mobile_model(dummy, verbose=False, imgsz=640)   # Match ML_MOBILE_IMGSZ
         _models_warmed = True
         logger.info("ML models pre-warmed with dummy inference")
     except Exception as e:
@@ -88,32 +88,28 @@ def prewarm_models():
 # ========================
 
 def is_leaning(keypoints):
-    """Detect leaning by comparing head & shoulder centers"""
+    """Detect leaning using nose-shoulder offset ratio (matches recorded video logic).
+    Uses ratio-based detection that scales with any frame resolution."""
     if keypoints is None or len(keypoints) < 7:
         return False
 
-    nose, l_eye, r_eye, l_ear, r_ear, l_shoulder, r_shoulder = keypoints[:7]
-    if any(pt is None for pt in [nose, l_eye, r_eye, l_ear, r_ear, l_shoulder, r_shoulder]):
+    nose = keypoints[0]
+    l_shoulder = keypoints[5]
+    r_shoulder = keypoints[6]
+
+    # Need good confidence on all key points
+    if nose[2] < 0.5 or l_shoulder[2] < 0.5 or r_shoulder[2] < 0.5:
         return False
 
-    eye_dist = abs(l_eye[0] - r_eye[0])
-    shoulder_dist = abs(l_shoulder[0] - r_shoulder[0])
-
-    if shoulder_dist > 0:
-        eye_ratio = eye_dist / shoulder_dist
-        if eye_ratio < 0.17:
-            return False  # Turning back, not leaning
-
-    shoulder_height_diff = abs(l_shoulder[1] - r_shoulder[1])
-    head_center_x = (l_eye[0] + r_eye[0]) / 2
     shoulder_center_x = (l_shoulder[0] + r_shoulder[0]) / 2
+    offset = abs(nose[0] - shoulder_center_x)
+    shoulder_width = abs(r_shoulder[0] - l_shoulder[0])
 
-    if eye_dist > 0.35 * shoulder_dist:
-        return False
-    if shoulder_height_diff > 40:
-        return False
+    if shoulder_width > 0:
+        lean_ratio = offset / shoulder_width
+        return lean_ratio > 0.4  # Same threshold as recorded video
 
-    return abs(head_center_x - shoulder_center_x) > 80
+    return False
 
 
 def is_turning_back(keypoints):
@@ -263,7 +259,8 @@ class FrameProcessor:
     GRACE_FRAMES = 30           # ML-processed frames after detection stops (~2s at real ML rate)
 
     # ML inference resolution (lower = faster)
-    ML_IMGSZ = 320              # YOLO input resolution (320 is ~4x faster than 640)
+    ML_POSE_IMGSZ = 320     # Pose detection: 320 is fine for skeleton keypoints
+    ML_MOBILE_IMGSZ = 640   # Mobile detection: needs higher res for small objects (matches recorded video)
 
     # COCO skeleton connection pairs
     SKELETON_PAIRS = [
@@ -332,7 +329,7 @@ class FrameProcessor:
 
         logger.info(f"FrameProcessor init: hall={lecture_hall}, teacher={teacher_id}, "
                      f"pre_roll={pre_roll_count} frames, grace={self.GRACE_FRAMES} frames, "
-                     f"ML imgsz={self.ML_IMGSZ}")
+                     f"ML pose_imgsz={self.ML_POSE_IMGSZ}, mobile_imgsz={self.ML_MOBILE_IMGSZ}")
 
     # ===========================
     # FRAME BUFFERING (called for EVERY incoming frame)
@@ -527,8 +524,8 @@ class FrameProcessor:
                 self._ml_frame_count = 0
                 self._ml_start_time = now
 
-            # ---- YOLO Pose Detection (reduced resolution for speed) ----
-            pose_results = _pose_model(frame, verbose=False, conf=0.3, imgsz=self.ML_IMGSZ)
+            # ---- YOLO Pose Detection (320px for speed — skeleton doesn't need high res) ----
+            pose_results = _pose_model(frame, verbose=False, conf=0.3, imgsz=self.ML_POSE_IMGSZ)
             all_keypoints = []
             all_wrists = []
             all_boxes = []
@@ -571,10 +568,10 @@ class FrameProcessor:
             if len(all_wrists) >= 2:
                 passing_detected, _ = detect_passing_paper(all_wrists, [])
 
-            # ---- YOLO Object Detection (mobile phone) with smart filter ----
+            # ---- YOLO Object Detection (mobile phone) — 640px for small objects ----
             mobile_detected = False
             mobile_conf = 0.0
-            obj_results = _mobile_model(frame, verbose=False, conf=0.25, imgsz=self.ML_IMGSZ)
+            obj_results = _mobile_model(frame, verbose=False, conf=0.25, imgsz=self.ML_MOBILE_IMGSZ)
 
             for result in obj_results:
                 if result.boxes is not None:
