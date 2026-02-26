@@ -581,7 +581,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         self._latest_frame = None
         self._ml_busy = False
 
-        # Start initializing ML processor in background
+        # Pre-warm models in background (so first ML frame is fast)
         asyncio.ensure_future(self._init_processor_background())
 
         # Notify admin that stream started
@@ -644,7 +644,9 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 self.detection_active = False
 
     async def process_frame(self, frame_bytes):
-        """Process a webcam frame — buffer ALL frames, ML with frame-dropping"""
+        """Process a webcam frame — buffer ALL frames, ML with frame-dropping.
+        Admin frame forwarding is DECOUPLED from ML — admin gets raw frames
+        at ~7 FPS regardless of how fast ML processes."""
         self.frame_count += 1
 
         # Always store the latest frame for ML (overwrites previous)
@@ -657,9 +659,10 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 loop.run_in_executor(ml_executor, self.frame_processor.buffer_frame, frame_bytes)
             )
 
-        # Forward frame to admin grid DIRECTLY (bypass channel layer for speed)
+        # Forward RAW frame to admin grid DIRECTLY — every 2nd frame (~7 FPS)
+        # This is completely independent of ML processing speed
         self.admin_frame_count += 1
-        if self.admin_frame_count % 3 == 0 and ADMIN_GRID_SENDERS:
+        if self.admin_frame_count % 2 == 0 and ADMIN_GRID_SENDERS:
             raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
             msg = json.dumps({
                 'type': 'camera_frame',
@@ -668,7 +671,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 'lecture_hall': ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', ''),
                 'frame': raw_b64,
             })
-            # Send to all connected admin grid consumers
+            # Send to all connected admin grid consumers directly
             dead_channels = []
             for ch_name, send_func in list(ADMIN_GRID_SENDERS.items()):
                 try:
@@ -733,7 +736,8 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
             self._ml_busy = False
 
     async def _init_processor_background(self):
-        """Initialize ML frame processor in background thread"""
+        """Initialize ML frame processor in background thread.
+        Pre-warms models on first use to eliminate cold-start delay."""
         try:
             loop = asyncio.get_event_loop()
             self.frame_processor = await loop.run_in_executor(
@@ -745,7 +749,8 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
             logger.error(f"Failed to init frame processor: {e}")
 
     def _create_frame_processor(self):
-        """Create FrameProcessor instance (runs in thread pool)"""
+        """Create FrameProcessor instance (runs in thread pool).
+        Pre-warms ML models on first invocation."""
         try:
             import sys
             import os
@@ -754,7 +759,9 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
             if ml_path not in sys.path:
                 sys.path.insert(0, ml_path)
 
-            from frame_processor import FrameProcessor
+            from frame_processor import FrameProcessor, prewarm_models
+            # Pre-warm models (only runs once, subsequent calls are no-ops)
+            prewarm_models()
             hall_name = ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', 'Unknown')
             return FrameProcessor(
                 lecture_hall=hall_name,

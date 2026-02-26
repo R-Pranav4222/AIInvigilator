@@ -2,7 +2,10 @@
 {% load static %}
 
 <style>
-  .cam-container { padding-top: 100px; padding-bottom: 60px; }
+  .cam-container {
+    padding-top: 100px;
+    padding-bottom: 60px;
+  }
 
   /* ---- Section Cards ---- */
   .cam-card {
@@ -15,13 +18,17 @@
     position: relative;
     overflow: hidden;
   }
+
   .cam-card::before {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
+    top: 0;
+    left: 0;
+    right: 0;
     height: 3px;
     background: var(--accent-gradient);
   }
+
   .section-heading {
     font-size: 1.5rem;
     font-weight: 800;
@@ -30,6 +37,7 @@
     letter-spacing: 2px;
     margin-bottom: 6px;
   }
+
   .section-sub {
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -43,6 +51,7 @@
     flex-wrap: wrap;
     margin-bottom: 20px;
   }
+
   .master-btn {
     padding: 12px 28px;
     font-weight: 700;
@@ -55,16 +64,26 @@
     align-items: center;
     gap: 8px;
   }
+
   .master-btn.start-all {
     background: var(--success);
     color: #fff;
   }
-  .master-btn.start-all:hover { background: #0ea572; box-shadow: 0 4px 15px rgba(16,185,129,0.3); }
+
+  .master-btn.start-all:hover {
+    background: #0ea572;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+  }
+
   .master-btn.stop-all {
     background: var(--danger);
     color: #fff;
   }
-  .master-btn.stop-all:hover { background: #dc2626; box-shadow: 0 4px 15px rgba(239,68,68,0.3); }
+
+  .master-btn.stop-all:hover {
+    background: #dc2626;
+    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+  }
 
   /* ---- Teacher List ---- */
   .teacher-grid {
@@ -73,29 +92,37 @@
     gap: 16px;
     margin-top: 16px;
   }
+
   .teacher-tile {
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     padding: 18px;
     transition: var(--transition-base);
   }
-  .teacher-tile:hover { border-color: var(--accent-cyan); }
+
+  .teacher-tile:hover {
+    border-color: var(--accent-cyan);
+  }
+
   .teacher-tile .t-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 10px;
   }
+
   .teacher-tile .t-name {
     font-weight: 700;
     color: var(--text-primary);
     font-size: 0.95rem;
   }
+
   .teacher-tile .t-hall {
     color: var(--text-muted);
     font-size: 0.8rem;
   }
+
   .status-dot {
     width: 10px;
     height: 10px;
@@ -103,26 +130,54 @@
     display: inline-block;
     margin-right: 6px;
   }
-  .status-dot.online { background: var(--success); box-shadow: 0 0 6px rgba(16,185,129,0.5); }
-  .status-dot.offline { background: #666; }
-  .status-dot.streaming { background: var(--accent-cyan); box-shadow: 0 0 6px rgba(0,212,255,0.5); animation: pulse 1.5s infinite; }
-  .status-dot.requested { background: var(--warning, #f59e0b); box-shadow: 0 0 6px rgba(245,158,11,0.5); }
-  .status-dot.denied { background: var(--danger); }
+
+  .status-dot.online {
+    background: var(--success);
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+  }
+
+  .status-dot.offline {
+    background: #666;
+  }
+
+  .status-dot.streaming {
+    background: var(--accent-cyan);
+    box-shadow: 0 0 6px rgba(0, 212, 255, 0.5);
+    animation: pulse 1.5s infinite;
+  }
+
+  .status-dot.requested {
+    background: var(--warning, #f59e0b);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+  }
+
+  .status-dot.denied {
+    background: var(--danger);
+  }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.4;
+    }
   }
 
   .status-label {
     font-size: 0.75rem;
     color: var(--text-muted);
   }
+
   .teacher-tile .t-actions {
     display: flex;
     gap: 8px;
     margin-top: 12px;
   }
+
   .t-btn {
     padding: 8px 16px;
     font-size: 0.82rem;
@@ -133,11 +188,29 @@
     transition: var(--transition-base);
     flex: 1;
   }
-  .t-btn.start { background: var(--success); color: #fff; }
-  .t-btn.start:hover { background: #0ea572; }
-  .t-btn.stop { background: var(--danger); color: #fff; }
-  .t-btn.stop:hover { background: #dc2626; }
-  .t-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .t-btn.start {
+    background: var(--success);
+    color: #fff;
+  }
+
+  .t-btn.start:hover {
+    background: #0ea572;
+  }
+
+  .t-btn.stop {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .t-btn.stop:hover {
+    background: #dc2626;
+  }
+
+  .t-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 
   /* ---- Camera Grid (Admin View) ---- */
   .camera-grid {
@@ -146,6 +219,7 @@
     gap: 16px;
     margin-top: 16px;
   }
+
   .camera-cell {
     background: #000;
     border-radius: var(--radius-md);
@@ -154,16 +228,18 @@
     aspect-ratio: 16 / 9;
     border: 1px solid var(--border-default);
   }
+
   .camera-cell img {
     width: 100%;
     height: 100%;
     object-fit: contain;
   }
+
   .camera-cell .cam-label {
     position: absolute;
     top: 8px;
     left: 8px;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.7);
     padding: 4px 12px;
     border-radius: 6px;
     font-size: 0.75rem;
@@ -171,6 +247,7 @@
     color: #fff;
     z-index: 2;
   }
+
   .camera-cell .cam-live-badge {
     position: absolute;
     top: 8px;
@@ -184,6 +261,7 @@
     animation: pulse 1.5s infinite;
     z-index: 2;
   }
+
   .camera-cell .no-feed {
     display: flex;
     align-items: center;
@@ -200,8 +278,16 @@
     padding: 40px 20px;
     color: var(--text-muted);
   }
-  .empty-state i { font-size: 3rem; margin-bottom: 12px; opacity: 0.3; }
-  .empty-state p { font-size: 0.9rem; }
+
+  .empty-state i {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.3;
+  }
+
+  .empty-state p {
+    font-size: 0.9rem;
+  }
 
   /* ---- Stats Bar ---- */
   .stats-bar {
@@ -210,15 +296,20 @@
     flex-wrap: wrap;
     margin-bottom: 20px;
   }
+
   .stat-chip {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border-default);
     border-radius: 8px;
     padding: 8px 16px;
     font-size: 0.85rem;
     color: var(--text-secondary);
   }
-  .stat-chip strong { color: var(--text-primary); margin-right: 4px; }
+
+  .stat-chip strong {
+    color: var(--text-primary);
+    margin-right: 4px;
+  }
 
   /* ---- Detection Alerts ---- */
   .alert-feed {
@@ -226,6 +317,7 @@
     overflow-y: auto;
     margin-top: 12px;
   }
+
   .alert-item {
     background: rgba(239, 68, 68, 0.08);
     border: 1px solid rgba(239, 68, 68, 0.2);
@@ -237,9 +329,20 @@
     justify-content: space-between;
     align-items: center;
   }
-  .alert-item .a-type { font-weight: 700; color: var(--danger); }
-  .alert-item .a-info { color: var(--text-muted); }
-  .alert-item .a-prob { color: var(--warning, #f59e0b); font-weight: 600; }
+
+  .alert-item .a-type {
+    font-weight: 700;
+    color: var(--danger);
+  }
+
+  .alert-item .a-info {
+    color: var(--text-muted);
+  }
+
+  .alert-item .a-prob {
+    color: var(--warning, #f59e0b);
+    font-weight: 600;
+  }
 </style>
 
 <div class="container-fluid cam-container" style="max-width:1400px;">
@@ -254,8 +357,10 @@
 
   <!-- SECTION 1: Teacher Controls -->
   <div class="cam-card">
-    <h2 class="section-heading"><i class="fas fa-users-cog" style="margin-right:10px;font-size:1.2rem;"></i>Camera Controls</h2>
-    <p class="section-sub">Manage teacher webcam streams. Teachers receive a confirmation prompt before their camera starts.</p>
+    <h2 class="section-heading"><i class="fas fa-users-cog" style="margin-right:10px;font-size:1.2rem;"></i>Camera
+      Controls</h2>
+    <p class="section-sub">Manage teacher webcam streams. Teachers receive a confirmation prompt before their camera
+      starts.</p>
 
     <!-- Master Buttons -->
     <div class="master-controls">
@@ -278,7 +383,8 @@
 
   <!-- SECTION 2: Live Camera Grid -->
   <div class="cam-card">
-    <h2 class="section-heading"><i class="fas fa-th-large" style="margin-right:10px;font-size:1.2rem;"></i>Live Camera Grid</h2>
+    <h2 class="section-heading"><i class="fas fa-th-large" style="margin-right:10px;font-size:1.2rem;"></i>Live Camera
+      Grid</h2>
     <p class="section-sub">Real-time view of all active teacher cameras. No ML overlays — plain raw feed.</p>
 
     <div id="cameraGrid" class="camera-grid">
@@ -291,7 +397,8 @@
 
   <!-- SECTION 3: Live Detection Alerts -->
   <div class="cam-card">
-    <h2 class="section-heading"><i class="fas fa-triangle-exclamation" style="margin-right:10px;font-size:1.2rem;"></i>Live Detection Alerts</h2>
+    <h2 class="section-heading"><i class="fas fa-triangle-exclamation"
+        style="margin-right:10px;font-size:1.2rem;"></i>Live Detection Alerts</h2>
     <p class="section-sub">Real-time malpractice detections from active camera streams.</p>
     <div id="alertFeed" class="alert-feed">
       <div class="empty-state" id="emptyAlerts" style="padding:20px;">
@@ -303,154 +410,154 @@
 </div>
 
 <script>
-// ======================================
-// ADMIN CAMERA MANAGEMENT — WebSocket
-// ======================================
-(function() {
-  const WS_BASE = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-  let notifSocket = null;
-  let gridSocket = null;
-  let teachers = [];
-  let activeSessions = {};
-  let detectionCount = 0;
+  // ======================================
+  // ADMIN CAMERA MANAGEMENT — WebSocket
+  // ======================================
+  (function () {
+    const WS_BASE = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+    let notifSocket = null;
+    let gridSocket = null;
+    let teachers = [];
+    let activeSessions = {};
+    let detectionCount = 0;
 
-  // ---- WebSocket: Notifications ----
-  function connectNotifications() {
-    notifSocket = new WebSocket(WS_BASE + '/ws/notifications/');
+    // ---- WebSocket: Notifications ----
+    function connectNotifications() {
+      notifSocket = new WebSocket(WS_BASE + '/ws/notifications/');
 
-    notifSocket.onopen = () => {
-      console.log('[WS] Notification channel connected');
-    };
+      notifSocket.onopen = () => {
+        console.log('[WS] Notification channel connected');
+      };
 
-    notifSocket.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      handleNotification(data);
-    };
+      notifSocket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        handleNotification(data);
+      };
 
-    notifSocket.onclose = (e) => {
-      console.log('[WS] Notification channel closed, reconnecting in 3s...');
-      setTimeout(connectNotifications, 3000);
-    };
+      notifSocket.onclose = (e) => {
+        console.log('[WS] Notification channel closed, reconnecting in 3s...');
+        setTimeout(connectNotifications, 3000);
+      };
 
-    notifSocket.onerror = (e) => {
-      console.error('[WS] Notification error:', e);
-    };
-  }
-
-  function handleNotification(data) {
-    switch (data.type) {
-      case 'initial_state':
-        teachers = data.teachers || [];
-        const sessions = data.active_sessions || [];
-        sessions.forEach(s => { activeSessions[s.teacher_id] = s; });
-        renderTeachers();
-        updateStats();
-        break;
-
-      case 'teacher_status':
-        teachers = data.teachers || [];
-        renderTeachers();
-        updateStats();
-        break;
-
-      case 'teacher_list':
-        teachers = data.teachers || [];
-        renderTeachers();
-        updateStats();
-        break;
-
-      case 'session_update':
-        handleSessionUpdate(data.session);
-        break;
-
-      case 'bulk_session_update':
-        (data.sessions || []).forEach(s => handleSessionUpdate(s));
-        break;
-
-      case 'malpractice_alert':
-        addDetectionAlert(data.detection);
-        break;
+      notifSocket.onerror = (e) => {
+        console.error('[WS] Notification error:', e);
+      };
     }
-  }
 
-  function handleSessionUpdate(session) {
-    if (!session) return;
-    if (session.status === 'stopped' || session.status === 'denied') {
-      delete activeSessions[session.teacher_id];
-    } else {
-      activeSessions[session.teacher_id] = session;
+    function handleNotification(data) {
+      switch (data.type) {
+        case 'initial_state':
+          teachers = data.teachers || [];
+          const sessions = data.active_sessions || [];
+          sessions.forEach(s => { activeSessions[s.teacher_id] = s; });
+          renderTeachers();
+          updateStats();
+          break;
+
+        case 'teacher_status':
+          teachers = data.teachers || [];
+          renderTeachers();
+          updateStats();
+          break;
+
+        case 'teacher_list':
+          teachers = data.teachers || [];
+          renderTeachers();
+          updateStats();
+          break;
+
+        case 'session_update':
+          handleSessionUpdate(data.session);
+          break;
+
+        case 'bulk_session_update':
+          (data.sessions || []).forEach(s => handleSessionUpdate(s));
+          break;
+
+        case 'malpractice_alert':
+          addDetectionAlert(data.detection);
+          break;
+      }
     }
-    renderTeachers();
-    updateStats();
-  }
 
-  // ---- WebSocket: Admin Camera Grid ----
-  function connectGrid() {
-    gridSocket = new WebSocket(WS_BASE + '/ws/camera/admin-grid/');
-
-    gridSocket.onopen = () => {
-      console.log('[WS] Admin grid channel connected');
-    };
-
-    gridSocket.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      handleGridMessage(data);
-    };
-
-    gridSocket.onclose = (e) => {
-      console.log('[WS] Admin grid closed, reconnecting in 3s...');
-      setTimeout(connectGrid, 3000);
-    };
-  }
-
-  function handleGridMessage(data) {
-    switch (data.type) {
-      case 'camera_frame':
-        updateCameraFrame(data.teacher_id, data.frame, data.teacher_name, data.lecture_hall);
-        break;
-
-      case 'stream_started':
-        addCameraCell(data.teacher_id, data.teacher_name, data.lecture_hall);
-        break;
-
-      case 'stream_ended':
-        removeCameraCell(data.teacher_id);
-        break;
-
-      case 'active_streams':
-        (data.streams || []).forEach(s => {
-          addCameraCell(s.teacher_id, s.teacher_name, s.lecture_hall);
-        });
-        break;
+    function handleSessionUpdate(session) {
+      if (!session) return;
+      if (session.status === 'stopped' || session.status === 'denied') {
+        delete activeSessions[session.teacher_id];
+      } else {
+        activeSessions[session.teacher_id] = session;
+      }
+      renderTeachers();
+      updateStats();
     }
-  }
 
-  // ---- Render Teacher Tiles ----
-  function renderTeachers() {
-    const grid = document.getElementById('teacherGrid');
-    const empty = document.getElementById('emptyTeachers');
+    // ---- WebSocket: Admin Camera Grid ----
+    function connectGrid() {
+      gridSocket = new WebSocket(WS_BASE + '/ws/camera/admin-grid/');
 
-    if (!teachers.length) {
+      gridSocket.onopen = () => {
+        console.log('[WS] Admin grid channel connected');
+      };
+
+      gridSocket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        handleGridMessage(data);
+      };
+
+      gridSocket.onclose = (e) => {
+        console.log('[WS] Admin grid closed, reconnecting in 3s...');
+        setTimeout(connectGrid, 3000);
+      };
+    }
+
+    function handleGridMessage(data) {
+      switch (data.type) {
+        case 'camera_frame':
+          updateCameraFrame(data.teacher_id, data.frame, data.teacher_name, data.lecture_hall);
+          break;
+
+        case 'stream_started':
+          addCameraCell(data.teacher_id, data.teacher_name, data.lecture_hall);
+          break;
+
+        case 'stream_ended':
+          removeCameraCell(data.teacher_id);
+          break;
+
+        case 'active_streams':
+          (data.streams || []).forEach(s => {
+            addCameraCell(s.teacher_id, s.teacher_name, s.lecture_hall);
+          });
+          break;
+      }
+    }
+
+    // ---- Render Teacher Tiles ----
+    function renderTeachers() {
+      const grid = document.getElementById('teacherGrid');
+      const empty = document.getElementById('emptyTeachers');
+
+      if (!teachers.length) {
+        grid.innerHTML = '';
+        grid.appendChild(empty);
+        empty.style.display = 'block';
+        return;
+      }
+
+      empty.style.display = 'none';
       grid.innerHTML = '';
       grid.appendChild(empty);
-      empty.style.display = 'block';
-      return;
-    }
 
-    empty.style.display = 'none';
-    grid.innerHTML = '';
-    grid.appendChild(empty);
+      teachers.forEach(t => {
+        const session = activeSessions[t.id];
+        const status = session ? session.status : (t.is_online ? 'online' : 'offline');
+        const statusClass = status === 'active' ? 'streaming' : status;
 
-    teachers.forEach(t => {
-      const session = activeSessions[t.id];
-      const status = session ? session.status : (t.is_online ? 'online' : 'offline');
-      const statusClass = status === 'active' ? 'streaming' : status;
+        const tile = document.createElement('div');
+        tile.className = 'teacher-tile';
+        tile.id = `teacher-tile-${t.id}`;
 
-      const tile = document.createElement('div');
-      tile.className = 'teacher-tile';
-      tile.id = `teacher-tile-${t.id}`;
-
-      tile.innerHTML = `
+        tile.innerHTML = `
         <div class="t-header">
           <div>
             <span class="t-name">${t.first_name} ${t.last_name || ''}</span>
@@ -472,125 +579,151 @@
           </button>
         </div>
       `;
-      grid.appendChild(tile);
-    });
-  }
+        grid.appendChild(tile);
+      });
+    }
 
-  // ---- Camera Grid (Raw Feeds) ----
-  function addCameraCell(teacherId, name, hall) {
-    const grid = document.getElementById('cameraGrid');
-    const empty = document.getElementById('emptyGrid');
-    empty.style.display = 'none';
+    // ---- Camera Grid (Raw Feeds) ----
+    function addCameraCell(teacherId, name, hall) {
+      const grid = document.getElementById('cameraGrid');
+      const empty = document.getElementById('emptyGrid');
+      empty.style.display = 'none';
 
-    if (document.getElementById(`cam-cell-${teacherId}`)) return;
+      if (document.getElementById(`cam-cell-${teacherId}`)) return;
 
-    const cell = document.createElement('div');
-    cell.className = 'camera-cell';
-    cell.id = `cam-cell-${teacherId}`;
-    cell.innerHTML = `
+      const cell = document.createElement('div');
+      cell.className = 'camera-cell';
+      cell.id = `cam-cell-${teacherId}`;
+      cell.innerHTML = `
       <span class="cam-label">${name} — ${hall}</span>
       <span class="cam-live-badge">LIVE</span>
       <img id="cam-img-${teacherId}" src="" alt="Camera Feed">
       <div class="no-feed" id="cam-nofeed-${teacherId}"><i class="fas fa-spinner fa-spin"></i></div>
     `;
-    grid.appendChild(cell);
-  }
-
-  function removeCameraCell(teacherId) {
-    const cell = document.getElementById(`cam-cell-${teacherId}`);
-    if (cell) cell.remove();
-
-    const grid = document.getElementById('cameraGrid');
-    if (!grid.querySelector('.camera-cell')) {
-      document.getElementById('emptyGrid').style.display = 'block';
+      grid.appendChild(cell);
     }
-  }
 
-  function updateCameraFrame(teacherId, frameB64, name, hall) {
-    if (!document.getElementById(`cam-cell-${teacherId}`)) {
-      addCameraCell(teacherId, name, hall);
+    function removeCameraCell(teacherId) {
+      const cell = document.getElementById(`cam-cell-${teacherId}`);
+      if (cell) cell.remove();
+
+      const grid = document.getElementById('cameraGrid');
+      if (!grid.querySelector('.camera-cell')) {
+        document.getElementById('emptyGrid').style.display = 'block';
+      }
     }
-    const img = document.getElementById(`cam-img-${teacherId}`);
-    const nofeed = document.getElementById(`cam-nofeed-${teacherId}`);
-    if (img) {
-      img.src = 'data:image/jpeg;base64,' + frameB64;
+
+    // Track per-teacher frame state for efficient updates
+    const _camFrameState = {};  // {teacherId: {lastUrl: string}}
+
+    function updateCameraFrame(teacherId, frameB64, name, hall) {
+      if (!document.getElementById(`cam-cell-${teacherId}`)) {
+        addCameraCell(teacherId, name, hall);
+      }
+      const img = document.getElementById(`cam-img-${teacherId}`);
+      const nofeed = document.getElementById(`cam-nofeed-${teacherId}`);
+      if (!img) return;
+
+      // Convert base64 to blob for efficient rendering
+      try {
+        const byteChars = atob(frameB64);
+        const byteArray = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) {
+          byteArray[i] = byteChars.charCodeAt(i);
+        }
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+
+        // Revoke previous URL to prevent memory leak
+        if (!_camFrameState[teacherId]) _camFrameState[teacherId] = {};
+        if (_camFrameState[teacherId].lastUrl) {
+          URL.revokeObjectURL(_camFrameState[teacherId].lastUrl);
+        }
+        _camFrameState[teacherId].lastUrl = url;
+
+        img.onload = () => { };  // Allow GC
+        img.src = url;
+      } catch (e) {
+        // Fallback to data URL
+        img.src = 'data:image/jpeg;base64,' + frameB64;
+      }
+
       if (nofeed) nofeed.style.display = 'none';
     }
-  }
 
-  // ---- Detection Alerts ----
-  function addDetectionAlert(detection) {
-    if (!detection) return;
-    detectionCount++;
-    document.getElementById('statDetections').textContent = detectionCount;
-    document.getElementById('emptyAlerts').style.display = 'none';
+    // ---- Detection Alerts ----
+    function addDetectionAlert(detection) {
+      if (!detection) return;
+      detectionCount++;
+      document.getElementById('statDetections').textContent = detectionCount;
+      document.getElementById('emptyAlerts').style.display = 'none';
 
-    const feed = document.getElementById('alertFeed');
-    const item = document.createElement('div');
-    item.className = 'alert-item';
-    item.innerHTML = `
+      const feed = document.getElementById('alertFeed');
+      const item = document.createElement('div');
+      item.className = 'alert-item';
+      item.innerHTML = `
       <span class="a-type">${detection.malpractice}</span>
       <span class="a-info">${detection.teacher_name || ''} — ${detection.lecture_hall || ''}</span>
       <span class="a-prob">${detection.probability_score ? detection.probability_score.toFixed(1) + '%' : ''}</span>
       <span class="a-info">${detection.time || ''}</span>
     `;
-    feed.insertBefore(item, feed.firstChild);
+      feed.insertBefore(item, feed.firstChild);
 
-    while (feed.children.length > 51) {
-      feed.removeChild(feed.lastChild);
+      while (feed.children.length > 51) {
+        feed.removeChild(feed.lastChild);
+      }
     }
-  }
 
-  // ---- Stats ----
-  function updateStats() {
-    document.getElementById('statTotal').textContent = teachers.length;
-    document.getElementById('statOnline').textContent = teachers.filter(t => t.is_online).length;
-    document.getElementById('statStreaming').textContent = Object.values(activeSessions).filter(s => s.status === 'active').length;
-  }
-
-  // ---- Commands ----
-  window.startCamera = function(teacherId) {
-    if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
-      notifSocket.send(JSON.stringify({
-        type: 'camera_request',
-        teacher_id: teacherId
-      }));
+    // ---- Stats ----
+    function updateStats() {
+      document.getElementById('statTotal').textContent = teachers.length;
+      document.getElementById('statOnline').textContent = teachers.filter(t => t.is_online).length;
+      document.getElementById('statStreaming').textContent = Object.values(activeSessions).filter(s => s.status === 'active').length;
     }
-  };
 
-  window.stopCamera = function(teacherId) {
-    if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
-      notifSocket.send(JSON.stringify({
-        type: 'camera_stop',
-        teacher_id: teacherId
-      }));
+    // ---- Commands ----
+    window.startCamera = function (teacherId) {
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_request',
+          teacher_id: teacherId
+        }));
+      }
+    };
+
+    window.stopCamera = function (teacherId) {
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_stop',
+          teacher_id: teacherId
+        }));
+      }
+    };
+
+    window.startAllCameras = function () {
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_request_all'
+        }));
+      }
+    };
+
+    window.stopAllCameras = function () {
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_stop_all'
+        }));
+      }
+    };
+
+    function capitalise(s) {
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
     }
-  };
 
-  window.startAllCameras = function() {
-    if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
-      notifSocket.send(JSON.stringify({
-        type: 'camera_request_all'
-      }));
-    }
-  };
-
-  window.stopAllCameras = function() {
-    if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
-      notifSocket.send(JSON.stringify({
-        type: 'camera_stop_all'
-      }));
-    }
-  };
-
-  function capitalise(s) {
-    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
-  }
-
-  // ---- Init ----
-  connectNotifications();
-  connectGrid();
-})();
+    // ---- Init ----
+    connectNotifications();
+    connectGrid();
+  })();
 </script>
 
 {% include 'footer.html' %}

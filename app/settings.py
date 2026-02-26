@@ -62,7 +62,8 @@ CHANNEL_LAYERS = {
         # },
         'BACKEND': 'channels.layers.InMemoryChannelLayer',
         'CONFIG': {
-            'capacity': 500,
+            'capacity': 1000,
+            'expiry': 10,
         },
     },
 }

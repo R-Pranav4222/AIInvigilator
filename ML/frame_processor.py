@@ -26,6 +26,7 @@ _model_lock = threading.Lock()
 _pose_model = None
 _mobile_model = None
 _models_loaded = False
+_models_warmed = False  # True after first dummy inference
 
 
 def _load_models():
@@ -63,6 +64,23 @@ def _load_models():
         except Exception as e:
             logger.error(f"Failed to load ML models: {e}")
             raise
+
+
+def prewarm_models():
+    """Pre-load and warm up models with a dummy inference so first real frame is fast."""
+    global _models_warmed
+    if _models_warmed:
+        return
+    try:
+        _load_models()
+        # Run a dummy inference to JIT-compile / warm GPU caches
+        dummy = np.zeros((240, 320, 3), dtype=np.uint8)
+        _pose_model(dummy, verbose=False, imgsz=320)
+        _mobile_model(dummy, verbose=False, imgsz=320)
+        _models_warmed = True
+        logger.info("ML models pre-warmed with dummy inference")
+    except Exception as e:
+        logger.warning(f"Model pre-warm failed (will load on first use): {e}")
 
 
 # ========================
@@ -241,8 +259,11 @@ class FrameProcessor:
 
     # Video recording config
     INPUT_FPS = 15              # Expected webcam FPS from browser
-    PRE_ROLL_SECONDS = 1.5      # Buffered seconds before detection
-    GRACE_FRAMES = 45           # Frames after detection stops before finalizing (~3s at 15fps)
+    PRE_ROLL_SECONDS = 1.0      # Buffered seconds before detection (reduced for shorter clips)
+    GRACE_FRAMES = 20           # ML-processed frames after detection stops (~1.3s at real ML rate)
+
+    # ML inference resolution (lower = faster)
+    ML_IMGSZ = 320              # YOLO input resolution (320 is ~4x faster than 640)
 
     # COCO skeleton connection pairs
     SKELETON_PAIRS = [
@@ -276,6 +297,11 @@ class FrameProcessor:
         # Frame counter
         self.frame_num = 0
 
+        # ML FPS tracking (for accurate probability calc)
+        self._ml_frame_count = 0
+        self._ml_start_time = None
+        self._actual_ml_fps = 15.0  # Will be updated as we process
+
         # === VIDEO RECORDING STATE ===
         self._recording_lock = threading.Lock()
         pre_roll_count = int(self.PRE_ROLL_SECONDS * self.INPUT_FPS)
@@ -289,8 +315,9 @@ class FrameProcessor:
                 'writer': None,
                 'temp_path': '',
                 'grace_frames': 0,
-                'det_frames': 0,        # Frames with active detection
-                'total_frames': 0,      # Total frames in recording
+                'det_frames': 0,        # ML frames with active detection
+                'total_ml_frames': 0,   # Total ML-processed frames during recording
+                'total_frames': 0,      # Total buffered frames in recording (for video)
                 'conf_sum': 0.0,
                 'conf_count': 0,
             }
@@ -304,7 +331,8 @@ class FrameProcessor:
         self._media_root = os.path.join(os.path.dirname(self._ml_dir), 'media')
 
         logger.info(f"FrameProcessor init: hall={lecture_hall}, teacher={teacher_id}, "
-                     f"pre_roll={pre_roll_count} frames, grace={self.GRACE_FRAMES} frames")
+                     f"pre_roll={pre_roll_count} frames, grace={self.GRACE_FRAMES} frames, "
+                     f"ML imgsz={self.ML_IMGSZ}")
 
     # ===========================
     # FRAME BUFFERING (called for EVERY incoming frame)
@@ -369,6 +397,7 @@ class FrameProcessor:
         rec['temp_path'] = temp_path
         rec['grace_frames'] = 0
         rec['det_frames'] = 0
+        rec['total_ml_frames'] = 0
         rec['total_frames'] = pre_roll_count
         rec['conf_sum'] = 0.0
         rec['conf_count'] = 0
@@ -414,8 +443,10 @@ class FrameProcessor:
             return None
 
         # Calculate probability score
+        # Use ML-processed frame ratio (not total buffered frames)
+        total_ml_frames = rec.get('total_ml_frames', 0) or max(rec['det_frames'], 1)
         probability = self._calc_probability_video(
-            action, rec['det_frames'], total_frames,
+            action, rec['det_frames'], total_ml_frames,
             rec['conf_sum'] / rec['conf_count'] if rec['conf_count'] > 0 else 0.0
         )
 
@@ -442,6 +473,7 @@ class FrameProcessor:
         rec = self._recordings[action]
         rec['grace_frames'] = 0
         rec['det_frames'] = 0
+        rec['total_ml_frames'] = 0
         rec['total_frames'] = 0
         rec['conf_sum'] = 0.0
         rec['conf_count'] = 0
@@ -485,12 +517,24 @@ class FrameProcessor:
             completed_detections = []
             annotated = frame.copy()
 
-            # ---- YOLO Pose Detection ----
-            pose_results = _pose_model(frame, verbose=False, conf=0.3)
+            # Track ML FPS for accurate probability scoring
+            self._ml_frame_count += 1
+            now = time.time()
+            if self._ml_start_time is None:
+                self._ml_start_time = now
+            elif now - self._ml_start_time > 2.0:
+                self._actual_ml_fps = self._ml_frame_count / (now - self._ml_start_time)
+                self._ml_frame_count = 0
+                self._ml_start_time = now
+
+            # ---- YOLO Pose Detection (reduced resolution for speed) ----
+            pose_results = _pose_model(frame, verbose=False, conf=0.3, imgsz=self.ML_IMGSZ)
             all_keypoints = []
             all_wrists = []
             all_boxes = []
 
+            # Scale factors: YOLO returns coords in original frame space when
+            # imgsz is set, so no manual scaling needed
             for result in pose_results:
                 if result.keypoints is not None and result.keypoints.data is not None:
                     for person_idx, kp_data in enumerate(result.keypoints.data):
@@ -530,7 +574,7 @@ class FrameProcessor:
             # ---- YOLO Object Detection (mobile phone) with smart filter ----
             mobile_detected = False
             mobile_conf = 0.0
-            obj_results = _mobile_model(frame, verbose=False, conf=0.25)
+            obj_results = _mobile_model(frame, verbose=False, conf=0.25, imgsz=self.ML_IMGSZ)
 
             for result in obj_results:
                 if result.boxes is not None:
@@ -617,21 +661,24 @@ class FrameProcessor:
                         if not rec['active']:
                             self._start_recording(action, w_frame, h_frame)
 
-                        # Track detection density
-                        if rec['active'] and detected:
-                            rec['det_frames'] += 1
-                            if conf > 0:
-                                rec['conf_sum'] += conf
-                                rec['conf_count'] += 1
-                            elif all_keypoints:
-                                # Use average keypoint confidence for pose-based detections
-                                kp = all_keypoints[0]
-                                avg_kp_conf = float(np.mean([kp[ki][2] for ki in range(min(len(kp), 17)) if kp[ki][2] > 0]))
-                                rec['conf_sum'] += avg_kp_conf
-                                rec['conf_count'] += 1
+                        # Track detection density (ML frames only)
+                        if rec['active']:
+                            rec['total_ml_frames'] += 1
+                            if detected:
+                                rec['det_frames'] += 1
+                                if conf > 0:
+                                    rec['conf_sum'] += conf
+                                    rec['conf_count'] += 1
+                                elif all_keypoints:
+                                    # Use average keypoint confidence for pose-based detections
+                                    kp = all_keypoints[0]
+                                    avg_kp_conf = float(np.mean([kp[ki][2] for ki in range(min(len(kp), 17)) if kp[ki][2] > 0]))
+                                    rec['conf_sum'] += avg_kp_conf
+                                    rec['conf_count'] += 1
                     else:
                         # Detection stopped — grace period countdown
                         if rec['active']:
+                            rec['total_ml_frames'] += 1
                             rec['grace_frames'] += 1
                             if rec['grace_frames'] >= self.GRACE_FRAMES:
                                 result = self._finalize_recording(action)
@@ -691,8 +738,8 @@ class FrameProcessor:
                 cv2.putText(annotated, info_text, (x_pos, y_pos),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
 
-            # Encode annotated frame to JPEG
-            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            # Encode annotated frame to JPEG (70% quality for faster encode/send)
+            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 70])
             annotated_bytes = buffer.tobytes()
 
             return {
@@ -725,18 +772,21 @@ class FrameProcessor:
         }
         type_score = type_priors.get(action, 0.50)
 
-        # Clip duration factor (30%): longer clips = higher confidence
-        clip_duration = total_frames / self.INPUT_FPS if self.INPUT_FPS > 0 else 0
-        if clip_duration >= 10:
+        # Clip duration factor (25%): use ML frame count / actual ML FPS
+        # total_frames here is total_ml_frames (not buffered video frames)
+        ml_fps = max(self._actual_ml_fps, 3.0)  # floor at 3 FPS
+        clip_duration = total_frames / ml_fps if ml_fps > 0 else 0
+        if clip_duration >= 8:
             duration_score = 1.0
-        elif clip_duration >= 5:
-            duration_score = 0.7 + (clip_duration - 5) * 0.06
+        elif clip_duration >= 4:
+            duration_score = 0.7 + (clip_duration - 4) * 0.075
         elif clip_duration >= 2:
-            duration_score = 0.4 + (clip_duration - 2) * 0.1
+            duration_score = 0.4 + (clip_duration - 2) * 0.15
         else:
-            duration_score = max(0.1, clip_duration * 0.2)
+            duration_score = max(0.2, clip_duration * 0.2)
 
-        # Detection density factor (25%): what % of frames had active detection
+        # Detection density factor (30%): what % of ML-processed frames had active detection
+        # This is now accurate because we use ML frames, not buffered video frames
         if total_frames > 0 and detection_frames > 0:
             density = min(detection_frames / total_frames, 1.0)
         else:
@@ -745,7 +795,7 @@ class FrameProcessor:
         # Confidence factor (20%)
         confidence_score = min(avg_confidence, 1.0) if avg_confidence > 0 else 0.65
 
-        # Sustainability factor (15%)
+        # Sustainability factor (15%): how many multiples of threshold were detected
         threshold_map = {
             'Leaning': self.LEANING_THRESHOLD,
             'Mobile Phone Detected': self.MOBILE_THRESHOLD,
@@ -758,11 +808,16 @@ class FrameProcessor:
 
         # Weighted combination
         probability = (
-            duration_score * 0.30
-            + density * 0.25
+            duration_score * 0.25
+            + density * 0.30
             + confidence_score * 0.20
             + sustainability * 0.15
             + type_score * 0.10
         ) * 100
+
+        logger.info(f"Probability calc: {action} dur={clip_duration:.1f}s "
+                     f"density={density:.2f} conf={confidence_score:.2f} "
+                     f"sustain={sustainability:.2f} type={type_score:.2f} "
+                     f"→ {probability:.1f}%")
 
         return round(max(0, min(100, probability)), 1)

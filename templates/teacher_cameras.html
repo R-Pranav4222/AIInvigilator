@@ -2,7 +2,10 @@
 {% load static %}
 
 <style>
-  .teacher-cam-container { padding-top: 100px; padding-bottom: 60px; }
+  .teacher-cam-container {
+    padding-top: 100px;
+    padding-bottom: 60px;
+  }
 
   .cam-card {
     background: var(--bg-glass);
@@ -14,13 +17,17 @@
     position: relative;
     overflow: hidden;
   }
+
   .cam-card::before {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0;
+    top: 0;
+    left: 0;
+    right: 0;
     height: 3px;
     background: var(--accent-gradient);
   }
+
   .section-heading {
     font-size: 1.5rem;
     font-weight: 800;
@@ -29,6 +36,7 @@
     letter-spacing: 2px;
     margin-bottom: 6px;
   }
+
   .section-sub {
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -46,19 +54,22 @@
     font-weight: 600;
     font-size: 0.95rem;
   }
+
   .status-banner.idle {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border-default);
     color: var(--text-muted);
   }
+
   .status-banner.requested {
-    background: rgba(245,158,11,0.1);
-    border: 1px solid rgba(245,158,11,0.3);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
     color: #f59e0b;
   }
+
   .status-banner.active {
-    background: rgba(0,212,255,0.08);
-    border: 1px solid rgba(0,212,255,0.3);
+    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid rgba(0, 212, 255, 0.3);
     color: var(--accent-cyan);
   }
 
@@ -73,6 +84,7 @@
     margin: 0 auto;
     aspect-ratio: 16 / 9;
   }
+
   .camera-preview video,
   .camera-preview canvas,
   .camera-preview img {
@@ -81,11 +93,12 @@
     object-fit: contain;
     display: block;
   }
+
   .camera-preview .overlay-label {
     position: absolute;
     top: 10px;
     left: 10px;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.7);
     padding: 6px 14px;
     border-radius: 8px;
     font-size: 0.8rem;
@@ -93,6 +106,7 @@
     color: var(--accent-cyan);
     z-index: 2;
   }
+
   .camera-preview .live-dot {
     position: absolute;
     top: 10px;
@@ -107,10 +121,19 @@
     z-index: 2;
     display: none;
   }
+
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.4;
+    }
   }
+
   .camera-placeholder {
     display: flex;
     flex-direction: column;
@@ -121,20 +144,27 @@
     font-size: 1.1rem;
     gap: 10px;
   }
-  .camera-placeholder i { font-size: 3rem; }
+
+  .camera-placeholder i {
+    font-size: 3rem;
+  }
 
   /* Confirmation Modal */
   .confirm-modal-overlay {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0, 0, 0, 0.7);
     backdrop-filter: blur(8px);
     z-index: 9999;
     align-items: center;
     justify-content: center;
   }
-  .confirm-modal-overlay.show { display: flex; }
+
+  .confirm-modal-overlay.show {
+    display: flex;
+  }
+
   .confirm-modal-box {
     background: var(--bg-card, #1a1a2e);
     border: 1px solid var(--border-default);
@@ -143,25 +173,29 @@
     max-width: 440px;
     width: 90%;
     text-align: center;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   }
+
   .confirm-modal-box h3 {
     color: var(--text-primary);
     font-weight: 800;
     font-size: 1.3rem;
     margin-bottom: 12px;
   }
+
   .confirm-modal-box p {
     color: var(--text-muted);
     font-size: 0.9rem;
     margin-bottom: 24px;
     line-height: 1.6;
   }
+
   .confirm-modal-box .modal-actions {
     display: flex;
     gap: 12px;
     justify-content: center;
   }
+
   .confirm-modal-box .modal-btn {
     padding: 12px 30px;
     font-weight: 700;
@@ -171,10 +205,24 @@
     cursor: pointer;
     transition: all 0.3s;
   }
-  .modal-btn.accept { background: var(--success); color: #fff; }
-  .modal-btn.accept:hover { background: #0ea572; }
-  .modal-btn.deny { background: var(--danger); color: #fff; }
-  .modal-btn.deny:hover { background: #dc2626; }
+
+  .modal-btn.accept {
+    background: var(--success);
+    color: #fff;
+  }
+
+  .modal-btn.accept:hover {
+    background: #0ea572;
+  }
+
+  .modal-btn.deny {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .modal-btn.deny:hover {
+    background: #dc2626;
+  }
 
   /* Detection Log */
   .detection-log {
@@ -182,6 +230,7 @@
     overflow-y: auto;
     margin-top: 16px;
   }
+
   .det-item {
     background: rgba(239, 68, 68, 0.08);
     border: 1px solid rgba(239, 68, 68, 0.2);
@@ -193,9 +242,21 @@
     justify-content: space-between;
     align-items: center;
   }
-  .det-item .d-type { font-weight: 700; color: var(--danger); }
-  .det-item .d-prob { color: var(--warning, #f59e0b); font-weight: 600; }
-  .det-item .d-time { color: var(--text-muted); font-size: 0.75rem; }
+
+  .det-item .d-type {
+    font-weight: 700;
+    color: var(--danger);
+  }
+
+  .det-item .d-prob {
+    color: var(--warning, #f59e0b);
+    font-weight: 600;
+  }
+
+  .det-item .d-time {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
 </style>
 
 <!-- Confirmation Modal (initially hidden) -->
@@ -226,7 +287,8 @@
     text-align: center;
     margin-bottom: 30px;
   ">
-    <i class="fas fa-building-circle-xmark" style="font-size: 3rem; color: #ef4444; margin-bottom: 16px; display: block;"></i>
+    <i class="fas fa-building-circle-xmark"
+      style="font-size: 3rem; color: #ef4444; margin-bottom: 16px; display: block;"></i>
     <h3 style="color: var(--text-primary); font-weight: 800; margin-bottom: 10px;">No Hall Assigned</h3>
     <p style="color: var(--text-muted); font-size: 0.95rem; max-width: 500px; margin: 0 auto 16px;">
       You are currently not assigned to any lecture hall. Camera streaming requires an active hall assignment.
@@ -274,11 +336,13 @@
 
     <div class="camera-preview" id="cameraPreview">
       <!-- Raw webcam video (shown directly for zero-latency local view) -->
-      <video id="webcamVideo" autoplay playsinline muted style="display:none; width:100%; height:100%; object-fit:cover; border-radius:12px;"></video>
+      <video id="webcamVideo" autoplay playsinline muted
+        style="display:none; width:100%; height:100%; object-fit:cover; border-radius:12px;"></video>
       <!-- Canvas for frame extraction (hidden) -->
       <canvas id="captureCanvas" style="display:none;"></canvas>
       <!-- ML-processed overlay from server (shown on top of raw video) -->
-      <img id="processedFeed" src="" alt="ML Overlay" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; border-radius:12px; z-index:2;">
+      <img id="processedFeed" src="" alt="ML Overlay"
+        style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; border-radius:12px; z-index:2;">
       <!-- Placeholder -->
       <div class="camera-placeholder" id="cameraPlaceholder">
         <i class="fas fa-video-slash"></i>
@@ -286,14 +350,17 @@
       </div>
       <span class="overlay-label" style="z-index:3;">ML Processed View</span>
       <span class="live-dot" id="liveDot" style="z-index:3;">LIVE</span>
-      <span class="live-dot" id="fpsBadge" style="display:none; right:80px; background:rgba(0,200,255,0.85); z-index:3;">-- FPS</span>
+      <span class="live-dot" id="fpsBadge"
+        style="display:none; right:80px; background:rgba(0,200,255,0.85); z-index:3;">-- FPS</span>
     </div>
   </div>
 
   <!-- Live Detections -->
   <div class="cam-card">
-    <h2 class="section-heading"><i class="fas fa-eye" style="margin-right:10px;font-size:1.2rem;"></i>Live Detections</h2>
-    <p class="section-sub">Malpractice events detected by AI on your camera stream (visible only to you during live session).</p>
+    <h2 class="section-heading"><i class="fas fa-eye" style="margin-right:10px;font-size:1.2rem;"></i>Live Detections
+    </h2>
+    <p class="section-sub">Malpractice events detected by AI on your camera stream (visible only to you during live
+      session).</p>
     <div class="detection-log" id="detectionLog">
       <div class="empty-state" id="emptyDetections" style="padding:20px;">
         <p style="opacity:0.5;">No detections yet.</p>
@@ -304,267 +371,267 @@
 </div>
 
 <script>
-// ======================================
-// TEACHER CAMERA — WebSocket Streaming
-// ======================================
-(function() {
-  const WS_BASE = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-  let notifSocket = null;
-  let streamSocket = null;
-  let webcamStream = null;
-  let sendInterval = null;
-  let pendingSessionId = null;
-  let activeSessionId = null;
+  // ======================================
+  // TEACHER CAMERA — WebSocket Streaming
+  // ======================================
+  (function () {
+    const WS_BASE = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+    let notifSocket = null;
+    let streamSocket = null;
+    let webcamStream = null;
+    let sendInterval = null;
+    let pendingSessionId = null;
+    let activeSessionId = null;
 
-  const video = document.getElementById('webcamVideo');
-  const canvas = document.getElementById('captureCanvas');
-  const ctx = canvas.getContext('2d');
-  const processedImg = document.getElementById('processedFeed');
-  const placeholder = document.getElementById('cameraPlaceholder');
-  const liveDot = document.getElementById('liveDot');
-  const statusBanner = document.getElementById('statusBanner');
-  const statusText = document.getElementById('statusText');
+    const video = document.getElementById('webcamVideo');
+    const canvas = document.getElementById('captureCanvas');
+    const ctx = canvas.getContext('2d');
+    const processedImg = document.getElementById('processedFeed');
+    const placeholder = document.getElementById('cameraPlaceholder');
+    const liveDot = document.getElementById('liveDot');
+    const statusBanner = document.getElementById('statusBanner');
+    const statusText = document.getElementById('statusText');
 
-  // ---- Notification WebSocket ----
-  function connectNotifications() {
-    notifSocket = new WebSocket(WS_BASE + '/ws/notifications/');
+    // ---- Notification WebSocket ----
+    function connectNotifications() {
+      notifSocket = new WebSocket(WS_BASE + '/ws/notifications/');
 
-    notifSocket.onopen = () => {
-      console.log('[WS] Teacher notification connected');
-    };
+      notifSocket.onopen = () => {
+        console.log('[WS] Teacher notification connected');
+      };
 
-    notifSocket.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      handleNotification(data);
-    };
+      notifSocket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        handleNotification(data);
+      };
 
-    notifSocket.onclose = () => {
-      console.log('[WS] Notification closed, reconnecting in 3s...');
-      setTimeout(connectNotifications, 3000);
-    };
-  }
+      notifSocket.onclose = () => {
+        console.log('[WS] Notification closed, reconnecting in 3s...');
+        setTimeout(connectNotifications, 3000);
+      };
+    }
 
-  function handleNotification(data) {
-    switch (data.type) {
-      case 'initial_state':
-        // Check if we have an active session
-        if (data.my_sessions && data.my_sessions.length > 0) {
-          const s = data.my_sessions[0];
-          if (s.status === 'requested') {
-            showConfirmModal(s.session_id);
-          } else if (s.status === 'active') {
-            activeSessionId = s.session_id;
-            startStreaming();
+    function handleNotification(data) {
+      switch (data.type) {
+        case 'initial_state':
+          // Check if we have an active session
+          if (data.my_sessions && data.my_sessions.length > 0) {
+            const s = data.my_sessions[0];
+            if (s.status === 'requested') {
+              showConfirmModal(s.session_id);
+            } else if (s.status === 'active') {
+              activeSessionId = s.session_id;
+              startStreaming();
+            }
           }
-        }
-        break;
+          break;
 
-      case 'camera_request':
-        showConfirmModal(data.session_id);
-        break;
+        case 'camera_request':
+          showConfirmModal(data.session_id);
+          break;
 
-      case 'camera_approved':
-        activeSessionId = data.session_id;
-        startStreaming();
-        break;
+        case 'camera_approved':
+          activeSessionId = data.session_id;
+          startStreaming();
+          break;
 
-      case 'camera_stop':
-        stopStreaming();
-        setStatus('idle', 'Camera stopped by admin.');
-        break;
-    }
-  }
-
-  // ---- Confirmation Modal ----
-  function showConfirmModal(sessionId) {
-    pendingSessionId = sessionId;
-    document.getElementById('confirmModal').classList.add('show');
-    setStatus('requested', 'Admin has requested your camera. Please accept or deny.');
-  }
-
-  window.respondToRequest = function(accepted) {
-    document.getElementById('confirmModal').classList.remove('show');
-
-    if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
-      notifSocket.send(JSON.stringify({
-        type: 'camera_response',
-        session_id: pendingSessionId,
-        accepted: accepted
-      }));
+        case 'camera_stop':
+          stopStreaming();
+          setStatus('idle', 'Camera stopped by admin.');
+          break;
+      }
     }
 
-    if (accepted) {
-      activeSessionId = pendingSessionId;
-      setStatus('active', 'Camera request accepted. Starting stream...');
-      // Camera will be started when we receive camera_approved from server
-    } else {
-      setStatus('idle', 'Camera request denied.');
-      pendingSessionId = null;
-    }
-  };
-
-  // ---- Start Webcam + Streaming ----
-  async function startStreaming() {
-    setStatus('active', 'Camera active — streaming to server with ML processing.');
-    placeholder.style.display = 'none';
-    video.style.display = 'block';       // Show raw webcam immediately (zero latency)
-    processedImg.style.display = 'block'; // ML overlay on top (updates when server responds)
-    liveDot.style.display = 'block';
-    document.getElementById('fpsBadge').style.display = 'block';
-
-    // Request webcam
-    try {
-      webcamStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, facingMode: 'user' },
-        audio: false
-      });
-      video.srcObject = webcamStream;
-      await video.play();
-    } catch (err) {
-      console.error('Webcam access denied:', err);
-      setStatus('idle', 'Webcam access denied. Please grant camera permission and try again.');
-      return;
+    // ---- Confirmation Modal ----
+    function showConfirmModal(sessionId) {
+      pendingSessionId = sessionId;
+      document.getElementById('confirmModal').classList.add('show');
+      setStatus('requested', 'Admin has requested your camera. Please accept or deny.');
     }
 
-    // Connect stream WebSocket
-    streamSocket = new WebSocket(WS_BASE + '/ws/camera/stream/');
+    window.respondToRequest = function (accepted) {
+      document.getElementById('confirmModal').classList.remove('show');
 
-    streamSocket.onopen = () => {
-      console.log('[WS] Camera stream connected');
-      // Start sending frames
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      startSendingFrames();
-    };
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_response',
+          session_id: pendingSessionId,
+          accepted: accepted
+        }));
+      }
 
-    streamSocket.onmessage = (e) => {
-      if (e.data instanceof Blob) {
-        // Binary: annotated JPEG frame from server
-        const url = URL.createObjectURL(e.data);
-        processedImg.onload = () => URL.revokeObjectURL(url);
-        processedImg.src = url;
+      if (accepted) {
+        activeSessionId = pendingSessionId;
+        setStatus('active', 'Camera request accepted. Starting stream...');
+        // Camera will be started when we receive camera_approved from server
       } else {
-        // JSON: detection info
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === 'detection') {
-            addDetection(data);
-          }
-        } catch(ex) {}
+        setStatus('idle', 'Camera request denied.');
+        pendingSessionId = null;
       }
     };
 
-    streamSocket.onclose = () => {
-      console.log('[WS] Stream closed');
-      stopSendingFrames();
-    };
-  }
+    // ---- Start Webcam + Streaming ----
+    async function startStreaming() {
+      setStatus('active', 'Camera active — streaming to server with ML processing.');
+      placeholder.style.display = 'none';
+      video.style.display = 'block';       // Show raw webcam immediately (zero latency)
+      processedImg.style.display = 'block'; // ML overlay on top (updates when server responds)
+      liveDot.style.display = 'block';
+      document.getElementById('fpsBadge').style.display = 'block';
 
-  const TARGET_FPS = 15;          // 15fps send rate (server does frame-dropping anyway)
-  const FRAME_INTERVAL = 1000 / TARGET_FPS;  // ~67ms per frame
-  let lastFrameTime = 0;
-  let rafId = null;
-  let fpsCounter = 0;
-  let fpsTimer = 0;
-  let currentFps = 0;
-
-  function startSendingFrames() {
-    lastFrameTime = performance.now();
-    fpsTimer = lastFrameTime;
-    fpsCounter = 0;
-    sendLoop(lastFrameTime);
-  }
-
-  function sendLoop(timestamp) {
-    rafId = requestAnimationFrame(sendLoop);
-
-    // Throttle to TARGET_FPS
-    const elapsed = timestamp - lastFrameTime;
-    if (elapsed < FRAME_INTERVAL) return;
-    lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
-
-    if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
-    if (video.readyState < 2) return;
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(blob => {
-      if (blob && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
-        streamSocket.send(blob);
+      // Request webcam
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: 'user' },
+          audio: false
+        });
+        video.srcObject = webcamStream;
+        await video.play();
+      } catch (err) {
+        console.error('Webcam access denied:', err);
+        setStatus('idle', 'Webcam access denied. Please grant camera permission and try again.');
+        return;
       }
-    }, 'image/jpeg', 0.75);
 
-    // FPS display (update every 30 frames)
-    fpsCounter++;
-    if (fpsCounter >= 30) {
-      currentFps = (fpsCounter / ((timestamp - fpsTimer) / 1000)).toFixed(1);
-      fpsTimer = timestamp;
+      // Connect stream WebSocket
+      streamSocket = new WebSocket(WS_BASE + '/ws/camera/stream/');
+
+      streamSocket.onopen = () => {
+        console.log('[WS] Camera stream connected');
+        // Start sending frames
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        startSendingFrames();
+      };
+
+      streamSocket.onmessage = (e) => {
+        if (e.data instanceof Blob) {
+          // Binary: annotated JPEG frame from server
+          const url = URL.createObjectURL(e.data);
+          processedImg.onload = () => URL.revokeObjectURL(url);
+          processedImg.src = url;
+        } else {
+          // JSON: detection info
+          try {
+            const data = JSON.parse(e.data);
+            if (data.type === 'detection') {
+              addDetection(data);
+            }
+          } catch (ex) { }
+        }
+      };
+
+      streamSocket.onclose = () => {
+        console.log('[WS] Stream closed');
+        stopSendingFrames();
+      };
+    }
+
+    const TARGET_FPS = 15;          // 15fps send rate (server does frame-dropping anyway)
+    const FRAME_INTERVAL = 1000 / TARGET_FPS;  // ~67ms per frame
+    let lastFrameTime = 0;
+    let rafId = null;
+    let fpsCounter = 0;
+    let fpsTimer = 0;
+    let currentFps = 0;
+
+    function startSendingFrames() {
+      lastFrameTime = performance.now();
+      fpsTimer = lastFrameTime;
       fpsCounter = 0;
-      const fpsBadge = document.getElementById('fpsBadge');
-      if (fpsBadge) fpsBadge.textContent = currentFps + ' FPS';
-    }
-  }
-
-  function stopSendingFrames() {
-    if (rafId) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-    if (sendInterval) {
-      clearInterval(sendInterval);
-      sendInterval = null;
-    }
-  }
-
-  function stopStreaming() {
-    stopSendingFrames();
-
-    if (streamSocket) {
-      streamSocket.close();
-      streamSocket = null;
+      sendLoop(lastFrameTime);
     }
 
-    if (webcamStream) {
-      webcamStream.getTracks().forEach(t => t.stop());
-      webcamStream = null;
+    function sendLoop(timestamp) {
+      rafId = requestAnimationFrame(sendLoop);
+
+      // Throttle to TARGET_FPS
+      const elapsed = timestamp - lastFrameTime;
+      if (elapsed < FRAME_INTERVAL) return;
+      lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
+
+      if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) return;
+      if (video.readyState < 2) return;
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        if (blob && streamSocket && streamSocket.readyState === WebSocket.OPEN) {
+          streamSocket.send(blob);
+        }
+      }, 'image/jpeg', 0.65);  // Lower quality = faster sends + faster ML
+
+      // FPS display (update every 30 frames)
+      fpsCounter++;
+      if (fpsCounter >= 30) {
+        currentFps = (fpsCounter / ((timestamp - fpsTimer) / 1000)).toFixed(1);
+        fpsTimer = timestamp;
+        fpsCounter = 0;
+        const fpsBadge = document.getElementById('fpsBadge');
+        if (fpsBadge) fpsBadge.textContent = currentFps + ' FPS';
+      }
     }
 
-    video.srcObject = null;
-    video.style.display = 'none';
-    processedImg.style.display = 'none';
-    processedImg.src = '';
-    placeholder.style.display = 'flex';
-    liveDot.style.display = 'none';
-    const fpsBadge2 = document.getElementById('fpsBadge');
-    if (fpsBadge2) fpsBadge2.style.display = 'none';
-    activeSessionId = null;
-  }
+    function stopSendingFrames() {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (sendInterval) {
+        clearInterval(sendInterval);
+        sendInterval = null;
+      }
+    }
 
-  // ---- Status Banner ----
-  function setStatus(type, text) {
-    statusBanner.className = 'status-banner ' + type;
-    const icons = { idle: 'fa-circle-info', requested: 'fa-bell', active: 'fa-circle-play' };
-    statusBanner.querySelector('i').className = 'fas ' + (icons[type] || 'fa-circle-info');
-    statusText.textContent = text;
-  }
+    function stopStreaming() {
+      stopSendingFrames();
 
-  // ---- Detections ----
-  function addDetection(det) {
-    document.getElementById('emptyDetections').style.display = 'none';
-    const log = document.getElementById('detectionLog');
-    const item = document.createElement('div');
-    item.className = 'det-item';
-    const now = new Date().toLocaleTimeString();
-    item.innerHTML = `
+      if (streamSocket) {
+        streamSocket.close();
+        streamSocket = null;
+      }
+
+      if (webcamStream) {
+        webcamStream.getTracks().forEach(t => t.stop());
+        webcamStream = null;
+      }
+
+      video.srcObject = null;
+      video.style.display = 'none';
+      processedImg.style.display = 'none';
+      processedImg.src = '';
+      placeholder.style.display = 'flex';
+      liveDot.style.display = 'none';
+      const fpsBadge2 = document.getElementById('fpsBadge');
+      if (fpsBadge2) fpsBadge2.style.display = 'none';
+      activeSessionId = null;
+    }
+
+    // ---- Status Banner ----
+    function setStatus(type, text) {
+      statusBanner.className = 'status-banner ' + type;
+      const icons = { idle: 'fa-circle-info', requested: 'fa-bell', active: 'fa-circle-play' };
+      statusBanner.querySelector('i').className = 'fas ' + (icons[type] || 'fa-circle-info');
+      statusText.textContent = text;
+    }
+
+    // ---- Detections ----
+    function addDetection(det) {
+      document.getElementById('emptyDetections').style.display = 'none';
+      const log = document.getElementById('detectionLog');
+      const item = document.createElement('div');
+      item.className = 'det-item';
+      const now = new Date().toLocaleTimeString();
+      item.innerHTML = `
       <span class="d-type">${det.action || det.malpractice || 'Detection'}</span>
       <span class="d-prob">${det.probability ? det.probability.toFixed(1) + '%' : ''}</span>
       <span class="d-time">${now}</span>
     `;
-    log.insertBefore(item, log.firstChild);
-  }
+      log.insertBefore(item, log.firstChild);
+    }
 
-  // ---- Init ----
-  connectNotifications();
-})();
+    // ---- Init ----
+    connectNotifications();
+  })();
 </script>
 
 {% include 'footer.html' %}
