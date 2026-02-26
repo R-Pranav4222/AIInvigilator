@@ -260,7 +260,7 @@ class FrameProcessor:
     # Video recording config
     INPUT_FPS = 15              # Expected webcam FPS from browser
     PRE_ROLL_SECONDS = 1.0      # Buffered seconds before detection (reduced for shorter clips)
-    GRACE_FRAMES = 20           # ML-processed frames after detection stops (~1.3s at real ML rate)
+    GRACE_FRAMES = 30           # ML-processed frames after detection stops (~2s at real ML rate)
 
     # ML inference resolution (lower = faster)
     ML_IMGSZ = 320              # YOLO input resolution (320 is ~4x faster than 640)

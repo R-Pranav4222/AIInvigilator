@@ -581,6 +581,9 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         self._latest_frame = None
         self._ml_busy = False
 
+        # Admin send backpressure flag — skip frames if previous send still in progress
+        self._admin_send_busy = False
+
         # Pre-warm models in background (so first ML frame is fast)
         asyncio.ensure_future(self._init_processor_background())
 
@@ -645,8 +648,8 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
 
     async def process_frame(self, frame_bytes):
         """Process a webcam frame — buffer ALL frames, ML with frame-dropping.
-        Admin frame forwarding is DECOUPLED from ML — admin gets raw frames
-        at ~7 FPS regardless of how fast ML processes."""
+        Admin frame forwarding is FIRE-AND-FORGET with backpressure — never blocks
+        frame reception even if admin WebSocket is slow."""
         self.frame_count += 1
 
         # Always store the latest frame for ML (overwrites previous)
@@ -659,10 +662,24 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 loop.run_in_executor(ml_executor, self.frame_processor.buffer_frame, frame_bytes)
             )
 
-        # Forward RAW frame to admin grid DIRECTLY — every 2nd frame (~7 FPS)
-        # This is completely independent of ML processing speed
+        # Forward RAW frame to admin grid — FIRE AND FORGET (non-blocking)
+        # With backpressure: skip this frame if previous send still in-flight
         self.admin_frame_count += 1
-        if self.admin_frame_count % 2 == 0 and ADMIN_GRID_SENDERS:
+        if (self.admin_frame_count % 3 == 0
+                and ADMIN_GRID_SENDERS
+                and not self._admin_send_busy):
+            self._admin_send_busy = True
+            asyncio.ensure_future(self._forward_to_admin(frame_bytes))
+
+        # ML processing: only if not already busy (frame-dropping)
+        if self.detection_active and not self._ml_busy and self.frame_processor:
+            self._ml_busy = True
+            asyncio.ensure_future(self._run_ml_processing())
+
+    async def _forward_to_admin(self, frame_bytes):
+        """Send a raw frame to all connected admin grid consumers.
+        Runs as fire-and-forget coroutine — never blocks process_frame."""
+        try:
             raw_b64 = base64.b64encode(frame_bytes).decode('utf-8')
             msg = json.dumps({
                 'type': 'camera_frame',
@@ -671,7 +688,6 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 'lecture_hall': ACTIVE_STREAMS.get(self.teacher_id, {}).get('hall_name', ''),
                 'frame': raw_b64,
             })
-            # Send to all connected admin grid consumers directly
             dead_channels = []
             for ch_name, send_func in list(ADMIN_GRID_SENDERS.items()):
                 try:
@@ -680,11 +696,10 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                     dead_channels.append(ch_name)
             for ch in dead_channels:
                 ADMIN_GRID_SENDERS.pop(ch, None)
-
-        # ML processing: only if not already busy (frame-dropping)
-        if self.detection_active and not self._ml_busy and self.frame_processor:
-            self._ml_busy = True
-            asyncio.ensure_future(self._run_ml_processing())
+        except Exception as e:
+            logger.error(f"Admin frame forward error: {e}")
+        finally:
+            self._admin_send_busy = False
 
     async def _run_ml_processing(self):
         """Run ML on the latest frame, handle completed detections with video proof"""

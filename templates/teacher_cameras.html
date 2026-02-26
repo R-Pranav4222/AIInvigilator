@@ -337,12 +337,12 @@
     <div class="camera-preview" id="cameraPreview">
       <!-- Raw webcam video (shown directly for zero-latency local view) -->
       <video id="webcamVideo" autoplay playsinline muted
-        style="display:none; width:100%; height:100%; object-fit:cover; border-radius:12px;"></video>
+        style="display:none; width:100%; height:100%; object-fit:contain; border-radius:12px;"></video>
       <!-- Canvas for frame extraction (hidden) -->
       <canvas id="captureCanvas" style="display:none;"></canvas>
       <!-- ML-processed overlay from server (shown on top of raw video) -->
       <img id="processedFeed" src="" alt="ML Overlay"
-        style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; border-radius:12px; z-index:2;">
+        style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; border-radius:12px; z-index:2;">
       <!-- Placeholder -->
       <div class="camera-placeholder" id="cameraPlaceholder">
         <i class="fas fa-video-slash"></i>
@@ -482,7 +482,7 @@
       // Request webcam
       try {
         webcamStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: 'user' },
+          video: { width: 1280, height: 720, facingMode: 'user' },
           audio: false
         });
         video.srcObject = webcamStream;
