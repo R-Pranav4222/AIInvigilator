@@ -107,6 +107,28 @@
     z-index: 2;
   }
 
+  /* Stop Camera Button */
+  .stop-cam-btn {
+    display: none;
+    margin: 16px auto 0;
+    padding: 12px 32px;
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    letter-spacing: 0.5px;
+  }
+
+  .stop-cam-btn:hover {
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+  }
+
   .camera-preview .live-dot {
     position: absolute;
     top: 10px;
@@ -353,6 +375,13 @@
       <span class="live-dot" id="fpsBadge"
         style="display:none; right:80px; background:rgba(0,200,255,0.85); z-index:3;">-- FPS</span>
     </div>
+
+    <!-- Stop Camera Button (visible only when streaming) -->
+    <div style="text-align:center;">
+      <button class="stop-cam-btn" id="stopCamBtn" onclick="window.teacherStopCamera()">
+        <i class="fas fa-video-slash" style="margin-right:8px;"></i>Stop Camera
+      </button>
+    </div>
   </div>
 
   <!-- Live Detections -->
@@ -487,9 +516,38 @@
         });
         video.srcObject = webcamStream;
         await video.play();
+        // Show the stop button
+        document.getElementById('stopCamBtn').style.display = 'inline-block';
       } catch (err) {
-        console.error('Webcam access denied:', err);
-        setStatus('idle', 'Webcam access denied. Please grant camera permission and try again.');
+        console.error('Webcam error:', err);
+        let reason = 'unknown';
+        let userMsg = 'Camera error. ';
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          reason = 'permission_denied';
+          userMsg = 'Camera permission denied. Please grant camera access and ask admin to retry.';
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          reason = 'no_camera_hardware';
+          userMsg = 'No camera found on this device. Please connect a webcam and ask admin to retry.';
+        } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+          reason = 'camera_in_use';
+          userMsg = 'Camera is being used by another application. Please close it and ask admin to retry.';
+        } else {
+          reason = err.name || 'hardware_error';
+          userMsg = `Camera error: ${err.message}. Please ask admin to retry.`;
+        }
+
+        setStatus('idle', userMsg);
+
+        // Notify admin about the camera failure
+        if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+          notifSocket.send(JSON.stringify({
+            type: 'camera_error',
+            session_id: activeSessionId,
+            reason: reason,
+            message: userMsg
+          }));
+        }
+        activeSessionId = null;
         return;
       }
 
@@ -504,7 +562,7 @@
         startSendingFrames();
       };
 
-      streamSocket.onmessage = (e) => {
+      function handleStreamMessage(e) {
         if (e.data instanceof Blob) {
           // Binary: annotated JPEG frame from server
           const url = URL.createObjectURL(e.data);
@@ -519,12 +577,35 @@
             }
           } catch (ex) { }
         }
-      };
+      }
 
-      streamSocket.onclose = () => {
-        console.log('[WS] Stream closed');
+      function handleStreamClose(ev) {
+        console.log('[WS] Stream closed, code:', ev.code);
         stopSendingFrames();
-      };
+
+        // Auto-reconnect if webcam is still active (network glitch or server restart)
+        if (webcamStream && activeSessionId) {
+          setStatus('active', 'Stream connection lost. Reconnecting in 3s...');
+          setTimeout(() => {
+            if (webcamStream && activeSessionId) {
+              console.log('[WS] Attempting stream reconnect...');
+              streamSocket = new WebSocket(WS_BASE + '/ws/camera/stream/');
+              streamSocket.onopen = () => {
+                console.log('[WS] Stream reconnected');
+                setStatus('active', 'Camera active — streaming to server with ML processing.');
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                startSendingFrames();
+              };
+              streamSocket.onmessage = handleStreamMessage;
+              streamSocket.onclose = handleStreamClose;
+            }
+          }, 3000);
+        }
+      }
+
+      streamSocket.onmessage = handleStreamMessage;
+      streamSocket.onclose = handleStreamClose;
     }
 
     const TARGET_FPS = 20;          // 20fps send rate for smoother admin view
@@ -579,6 +660,10 @@
     function stopStreaming() {
       stopSendingFrames();
 
+      // Clear activeSessionId FIRST to prevent auto-reconnect
+      const wasActive = activeSessionId;
+      activeSessionId = null;
+
       if (streamSocket) {
         streamSocket.close();
         streamSocket = null;
@@ -595,10 +680,27 @@
       processedImg.src = '';
       placeholder.style.display = 'flex';
       liveDot.style.display = 'none';
+      document.getElementById('stopCamBtn').style.display = 'none';
       const fpsBadge2 = document.getElementById('fpsBadge');
       if (fpsBadge2) fpsBadge2.style.display = 'none';
-      activeSessionId = null;
     }
+
+    // ---- Teacher-initiated camera stop ----
+    window.teacherStopCamera = function () {
+      const sessionId = activeSessionId;
+
+      // Stop streaming locally first
+      stopStreaming();
+      setStatus('idle', 'Camera stopped by you.');
+
+      // Notify server
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN && sessionId) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_stop_by_teacher',
+          session_id: sessionId
+        }));
+      }
+    };
 
     // ---- Status Banner ----
     function setStatus(type, text) {

@@ -7,6 +7,18 @@
     padding-bottom: 60px;
   }
 
+  @keyframes slideIn {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
   /* ---- Section Cards ---- */
   .cam-card {
     background: var(--bg-glass);
@@ -477,6 +489,16 @@
         case 'malpractice_alert':
           addDetectionAlert(data.detection);
           break;
+
+        case 'camera_stopped_by_teacher':
+          // Teacher stopped their own camera
+          showToast('info', `${data.teacher_name} stopped their camera.`, 5000);
+          break;
+
+        case 'camera_error':
+          // Teacher's camera failed — show error with retry button
+          showCameraErrorToast(data.teacher_id, data.teacher_name, data.reason, data.message);
+          break;
       }
     }
 
@@ -753,6 +775,65 @@
     function capitalise(s) {
       return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
     }
+
+    // ---- Toast Notifications ----
+    function showToast(type, message, duration = 5000) {
+      // Create toast container if needed
+      let container = document.getElementById('toastContainer');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;max-width:400px;';
+        document.body.appendChild(container);
+      }
+
+      const colors = {
+        info: { bg: 'rgba(0,212,255,0.15)', border: 'rgba(0,212,255,0.4)', text: '#00d4ff', icon: 'fa-info-circle' },
+        error: { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.4)', text: '#ef4444', icon: 'fa-exclamation-triangle' },
+        warning: { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)', text: '#f59e0b', icon: 'fa-exclamation-circle' },
+        success: { bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.4)', text: '#22c55e', icon: 'fa-check-circle' },
+      };
+      const c = colors[type] || colors.info;
+
+      const toast = document.createElement('div');
+      toast.style.cssText = `background:${c.bg};border:1px solid ${c.border};border-radius:10px;padding:14px 18px;backdrop-filter:blur(12px);animation:slideIn 0.3s ease;color:${c.text};font-size:0.9rem;font-weight:600;display:flex;align-items:flex-start;gap:10px;`;
+      toast.innerHTML = `<i class="fas ${c.icon}" style="margin-top:2px;"></i><div style="flex:1;">${message}</div><i class="fas fa-times" style="cursor:pointer;opacity:0.6;" onclick="this.parentElement.remove()"></i>`;
+      container.appendChild(toast);
+
+      if (duration > 0) {
+        setTimeout(() => { if (toast.parentElement) toast.remove(); }, duration);
+      }
+    }
+
+    function showCameraErrorToast(teacherId, teacherName, reason, message) {
+      const reasonLabels = {
+        'permission_denied': 'Camera permission was denied',
+        'no_camera_hardware': 'No camera hardware found',
+        'camera_in_use': 'Camera is in use by another app',
+        'hardware_error': 'Camera hardware error',
+      };
+      const label = reasonLabels[reason] || reason;
+
+      showToast('error',
+        `<strong>${teacherName}</strong><br>${label}<br>
+         <button onclick="retryCamera(${teacherId})" style="
+           margin-top:8px;padding:6px 16px;background:rgba(239,68,68,0.3);
+           border:1px solid rgba(239,68,68,0.5);border-radius:6px;color:#fff;
+           font-weight:600;font-size:0.8rem;cursor:pointer;
+         "><i class="fas fa-redo" style="margin-right:4px;"></i>Retry Camera</button>`,
+        0  // Don't auto-dismiss error toasts
+      );
+    }
+
+    window.retryCamera = function (teacherId) {
+      if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+        notifSocket.send(JSON.stringify({
+          type: 'camera_request',
+          teacher_id: teacherId
+        }));
+        showToast('info', 'Retry camera request sent.', 3000);
+      }
+    };
 
     // ---- Init ----
     connectNotifications();

@@ -100,6 +100,14 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             # Admin stops ALL cameras
             await self.handle_camera_stop_all()
 
+        elif msg_type == 'camera_stop_by_teacher':
+            # Teacher stops their own camera
+            await self.handle_camera_stop_by_teacher(content)
+
+        elif msg_type == 'camera_error':
+            # Teacher's camera failed to start (hardware/permission error)
+            await self.handle_camera_error(content)
+
         elif msg_type == 'get_teachers':
             # Admin requests current teacher list
             await self.send_teacher_list()
@@ -267,6 +275,70 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
+    async def handle_camera_stop_by_teacher(self, content):
+        """Teacher stops their own camera"""
+        session_id = content.get('session_id')
+        if not session_id:
+            return
+
+        session = await self.stop_camera_session(session_id=session_id)
+        if not session:
+            return
+
+        # Notify admin that teacher stopped their camera
+        await self.channel_layer.group_send(
+            'admin_notifications',
+            {
+                'type': 'session.update',
+                'session': session,
+            }
+        )
+
+        # Also send a specific notification so admin knows it was teacher-initiated
+        teacher_name = session.get('teacher_name', 'Unknown')
+        await self.channel_layer.group_send(
+            'admin_notifications',
+            {
+                'type': 'camera.stopped.by.teacher',
+                'teacher_id': session['teacher_id'],
+                'teacher_name': teacher_name,
+                'message': f'{teacher_name} stopped their camera.',
+            }
+        )
+
+    async def handle_camera_error(self, content):
+        """Teacher's camera failed to start — notify admin with error details"""
+        session_id = content.get('session_id')
+        reason = content.get('reason', 'unknown')
+        message = content.get('message', 'Camera error')
+
+        # Get teacher info
+        teacher_name = f'{self.user.first_name} {self.user.last_name}'.strip() or self.user.username
+
+        # Update session status to 'error' (allows retry)
+        if session_id:
+            session = await self.stop_camera_session(session_id=session_id)
+            if session:
+                await self.channel_layer.group_send(
+                    'admin_notifications',
+                    {
+                        'type': 'session.update',
+                        'session': session,
+                    }
+                )
+
+        # Send specific camera error notification to admin
+        await self.channel_layer.group_send(
+            'admin_notifications',
+            {
+                'type': 'camera.error.notification',
+                'teacher_id': self.user.id,
+                'teacher_name': teacher_name,
+                'reason': reason,
+                'message': message,
+            }
+        )
+
     # ===========================
     # CHANNEL LAYER EVENT HANDLERS
     # (called by group_send)
@@ -322,6 +394,25 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({
             'type': 'review_notification',
             'review': event['review'],
+        })
+
+    async def camera_stopped_by_teacher(self, event):
+        """Admin receives notification that teacher stopped their own camera"""
+        await self.send_json({
+            'type': 'camera_stopped_by_teacher',
+            'teacher_id': event['teacher_id'],
+            'teacher_name': event['teacher_name'],
+            'message': event['message'],
+        })
+
+    async def camera_error_notification(self, event):
+        """Admin receives camera error notification from teacher"""
+        await self.send_json({
+            'type': 'camera_error',
+            'teacher_id': event['teacher_id'],
+            'teacher_name': event['teacher_name'],
+            'reason': event['reason'],
+            'message': event['message'],
         })
 
     # ===========================
