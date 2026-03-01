@@ -25,6 +25,11 @@ ACTIVE_STREAMS = {}  # {teacher_id: {'channel_name': ..., 'hall_id': ...}}
 # {channel_name: send_func}  where send_func is the consumer's async send method
 ADMIN_GRID_SENDERS = {}
 
+# Admin presence tracking for heartbeat system
+CONNECTED_ADMINS = set()  # Set of admin channel_names
+_admin_disconnect_timer = None  # Timer to stop streams if no admin for 60s
+ADMIN_TIMEOUT_SECONDS = 60
+
 
 class NotificationConsumer(AsyncJsonWebsocketConsumer):
     """
@@ -53,6 +58,13 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         if self.user.is_superuser:
             self.admin_group = 'admin_notifications'
             await self.channel_layer.group_add(self.admin_group, self.channel_name)
+            # Track admin presence
+            CONNECTED_ADMINS.add(self.channel_name)
+            global _admin_disconnect_timer
+            if _admin_disconnect_timer:
+                _admin_disconnect_timer.cancel()
+                _admin_disconnect_timer = None
+                logger.info(f"Admin connected ({len(CONNECTED_ADMINS)} active), cancelled disconnect timer")
 
         await self.accept()
 
@@ -71,10 +83,44 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
                 await self.set_teacher_online(False)
                 await self.broadcast_teacher_status()
 
+            # Track admin presence
+            if self.user.is_superuser:
+                CONNECTED_ADMINS.discard(self.channel_name)
+                if not CONNECTED_ADMINS and ACTIVE_STREAMS:
+                    # Last admin disconnected while streams are active
+                    # Start a timer — if no admin reconnects in 60s, warn teachers
+                    logger.warning(f"Last admin disconnected. Starting {ADMIN_TIMEOUT_SECONDS}s warning timer.")
+                    global _admin_disconnect_timer
+                    loop = asyncio.get_event_loop()
+                    _admin_disconnect_timer = loop.call_later(
+                        ADMIN_TIMEOUT_SECONDS,
+                        lambda: asyncio.ensure_future(self._admin_timeout_handler())
+                    )
+
             await self.channel_layer.group_discard(self.notification_group, self.channel_name)
             await self.channel_layer.group_discard(self.user_group, self.channel_name)
             if hasattr(self, 'admin_group'):
                 await self.channel_layer.group_discard(self.admin_group, self.channel_name)
+
+    async def _admin_timeout_handler(self):
+        """Called when no admin has been connected for ADMIN_TIMEOUT_SECONDS."""
+        if CONNECTED_ADMINS:
+            return  # An admin reconnected in time
+
+        logger.warning("No admin connected for 60s. Notifying active teacher streams.")
+        # Notify all active teachers that admin is disconnected
+        for teacher_id in list(ACTIVE_STREAMS.keys()):
+            try:
+                await self.channel_layer.group_send(
+                    f'user_{teacher_id}',
+                    {
+                        'type': 'admin.disconnected',
+                        'message': 'Admin has been disconnected for over 60 seconds. '
+                                   'Your camera is still streaming but no one is monitoring.',
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error notifying teacher {teacher_id}: {e}")
 
     async def receive_json(self, content):
         """Handle incoming WebSocket messages"""
@@ -357,6 +403,13 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({
             'type': 'camera_stop',
             'session_id': event['session_id'],
+            'message': event['message'],
+        })
+
+    async def admin_disconnected(self, event):
+        """Teacher is warned that admin has been disconnected"""
+        await self.send_json({
+            'type': 'admin_disconnected',
             'message': event['message'],
         })
 

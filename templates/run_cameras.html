@@ -835,6 +835,22 @@
       }
     };
 
+    // ---- Laptop Sleep/Wake: reconnect WebSockets ----
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        // Check if notification WS died during sleep
+        if (!notifSocket || notifSocket.readyState !== WebSocket.OPEN) {
+          console.log('[Wake] Admin notif WS dead, reconnecting...');
+          connectNotifications();
+        }
+        // Check if grid WS died during sleep
+        if (!gridSocket || gridSocket.readyState !== WebSocket.OPEN) {
+          console.log('[Wake] Admin grid WS dead, reconnecting...');
+          connectGrid();
+        }
+      }
+    });
+
     // ---- Init ----
     connectNotifications();
     connectGrid();

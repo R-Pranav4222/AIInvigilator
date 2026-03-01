@@ -468,6 +468,11 @@
           stopStreaming();
           setStatus('idle', 'Camera stopped by admin.');
           break;
+
+        case 'admin_disconnected':
+          // Admin has been gone for 60+s — warn teacher but don't stop
+          setStatus('requested', data.message || 'Admin disconnected. Camera still active.');
+          break;
       }
     }
 
@@ -724,6 +729,51 @@
     `;
       log.insertBefore(item, log.firstChild);
     }
+
+    // ---- Page Unload: clean close on navigation/tab close ----
+    window.addEventListener('beforeunload', () => {
+      if (activeSessionId) {
+        // Notify server before leaving (synchronous close)
+        if (notifSocket && notifSocket.readyState === WebSocket.OPEN) {
+          notifSocket.send(JSON.stringify({
+            type: 'camera_stop_by_teacher',
+            session_id: activeSessionId
+          }));
+        }
+        // Force-close WebSockets immediately
+        if (streamSocket) { streamSocket.close(); streamSocket = null; }
+        if (webcamStream) { webcamStream.getTracks().forEach(t => t.stop()); }
+      }
+    });
+
+    // ---- Laptop Sleep/Wake: reconnect dead WebSockets ----
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        // Page became visible again (laptop woke up, tab refocused)
+        // Check if notification WebSocket died during sleep
+        if (!notifSocket || notifSocket.readyState !== WebSocket.OPEN) {
+          console.log('[Wake] Notification WS dead, reconnecting...');
+          connectNotifications();
+        }
+        // Check if stream WebSocket died during active session
+        if (activeSessionId && webcamStream) {
+          if (!streamSocket || streamSocket.readyState !== WebSocket.OPEN) {
+            console.log('[Wake] Stream WS dead during active session, reconnecting...');
+            setStatus('active', 'Reconnecting after sleep...');
+            streamSocket = new WebSocket(WS_BASE + '/ws/camera/stream/');
+            streamSocket.onopen = () => {
+              console.log('[Wake] Stream reconnected');
+              setStatus('active', 'Camera active — streaming to server with ML processing.');
+              canvas.width = video.videoWidth || 640;
+              canvas.height = video.videoHeight || 480;
+              startSendingFrames();
+            };
+            streamSocket.onmessage = handleStreamMessage;
+            streamSocket.onclose = handleStreamClose;
+          }
+        }
+      }
+    });
 
     // ---- Init ----
     connectNotifications();
