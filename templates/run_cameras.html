@@ -499,9 +499,43 @@
         console.log('[WS] Admin grid channel connected');
       };
 
-      gridSocket.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        handleGridMessage(data);
+      gridSocket.onmessage = async (e) => {
+        // Binary frames: [4-byte teacher_id] + [raw JPEG bytes]
+        // Text frames: JSON control messages (stream_started, stream_ended, etc.)
+        if (e.data instanceof Blob) {
+          try {
+            const buffer = await e.data.arrayBuffer();
+            if (buffer.byteLength < 5) return;  // Need at least header + 1 byte
+
+            const teacherId = new DataView(buffer).getUint32(0);
+            const jpegBlob = new Blob([buffer.slice(4)], { type: 'image/jpeg' });
+
+            // Ensure camera cell exists
+            if (!document.getElementById(`cam-cell-${teacherId}`)) {
+              addCameraCell(teacherId, `Teacher ${teacherId}`, '');
+            }
+
+            const img = document.getElementById(`cam-img-${teacherId}`);
+            if (img) {
+              // Revoke previous blob URL to prevent memory leak
+              if (!_camFrameState[teacherId]) _camFrameState[teacherId] = {};
+              if (_camFrameState[teacherId].lastUrl) {
+                URL.revokeObjectURL(_camFrameState[teacherId].lastUrl);
+              }
+              const url = URL.createObjectURL(jpegBlob);
+              _camFrameState[teacherId].lastUrl = url;
+              img.src = url;
+            }
+            const nofeed = document.getElementById(`cam-nofeed-${teacherId}`);
+            if (nofeed) nofeed.style.display = 'none';
+          } catch (err) {
+            console.error('Binary frame error:', err);
+          }
+        } else {
+          // JSON text message (control events)
+          const data = JSON.parse(e.data);
+          handleGridMessage(data);
+        }
       };
 
       gridSocket.onclose = (e) => {

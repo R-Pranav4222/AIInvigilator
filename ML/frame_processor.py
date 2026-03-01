@@ -758,7 +758,7 @@ class FrameProcessor:
                                  avg_confidence=0.0):
         """
         Calculate AI probability score for a video clip detection.
-        Matches the recorded video pipeline's scoring system.
+        ALIGNED with recorded video pipeline's scoring system for consistent results.
         """
         type_priors = {
             'Mobile Phone Detected': 0.85,
@@ -769,30 +769,51 @@ class FrameProcessor:
         }
         type_score = type_priors.get(action, 0.50)
 
-        # Clip duration factor (25%): use ML frame count / actual ML FPS
-        # total_frames here is total_ml_frames (not buffered video frames)
-        ml_fps = max(self._actual_ml_fps, 3.0)  # floor at 3 FPS
+        # ===== Factor 1: Clip Duration (30%) =====
+        # Use actual ML FPS for accurate duration estimation
+        ml_fps = max(self._actual_ml_fps, 3.0)
         clip_duration = total_frames / ml_fps if ml_fps > 0 else 0
-        if clip_duration >= 8:
-            duration_score = 1.0
-        elif clip_duration >= 4:
-            duration_score = 0.7 + (clip_duration - 4) * 0.075
-        elif clip_duration >= 2:
-            duration_score = 0.4 + (clip_duration - 2) * 0.15
-        else:
-            duration_score = max(0.2, clip_duration * 0.2)
 
-        # Detection density factor (30%): what % of ML-processed frames had active detection
-        # This is now accurate because we use ML frames, not buffered video frames
+        # Tiered scoring (matches recorded video ranges)
+        if clip_duration >= 10:
+            duration_score = 1.0
+        elif clip_duration >= 6:
+            duration_score = 0.90
+        elif clip_duration >= 4:
+            duration_score = 0.75
+        elif clip_duration >= 2:
+            duration_score = 0.55
+        elif clip_duration >= 1:
+            duration_score = 0.30
+        else:
+            duration_score = 0.15
+
+        # ===== Factor 2: Detection Density (25%) =====
+        # With 1.5x boost (matches recorded video — boosts consistent detections)
         if total_frames > 0 and detection_frames > 0:
             density = min(detection_frames / total_frames, 1.0)
+            density_score = min(density * 1.5, 1.0)  # 1.5x boost, cap at 1.0
         else:
-            density = 0.5
+            density_score = 0.3
 
-        # Confidence factor (20%)
-        confidence_score = min(avg_confidence, 1.0) if avg_confidence > 0 else 0.65
+        # ===== Factor 3: Confidence (20%) =====
+        # Tiered scoring (matches recorded video — maps raw conf to meaningful brackets)
+        if avg_confidence > 0:
+            if avg_confidence >= 0.70:
+                conf_score = 1.0
+            elif avg_confidence >= 0.50:
+                conf_score = 0.80
+            elif avg_confidence >= 0.35:
+                conf_score = 0.55
+            elif avg_confidence >= 0.25:
+                conf_score = 0.35
+            else:
+                conf_score = 0.15
+        else:
+            conf_score = 0.50
 
-        # Sustainability factor (15%): how many multiples of threshold were detected
+        # ===== Factor 4: Sustainability (15%) =====
+        # Tiered scoring (matches recorded video)
         threshold_map = {
             'Leaning': self.LEANING_THRESHOLD,
             'Mobile Phone Detected': self.MOBILE_THRESHOLD,
@@ -801,20 +822,36 @@ class FrameProcessor:
             'Hand Raised': self.HAND_RAISE_THRESHOLD,
         }
         threshold = threshold_map.get(action, 3)
-        sustainability = min(detection_frames / threshold, 5.0) / 5.0
 
-        # Weighted combination
+        if detection_frames > 0:
+            sustainability_ratio = detection_frames / threshold
+            if sustainability_ratio >= 5:
+                sustainability_score = 1.0
+            elif sustainability_ratio >= 3:
+                sustainability_score = 0.85
+            elif sustainability_ratio >= 2:
+                sustainability_score = 0.65
+            elif sustainability_ratio >= 1.5:
+                sustainability_score = 0.45
+            else:
+                sustainability_score = 0.25
+        else:
+            sustainability_score = 0.25
+
+        # ===== Weighted Combination (same weights as recorded video) =====
         probability = (
-            duration_score * 0.25
-            + density * 0.30
-            + confidence_score * 0.20
-            + sustainability * 0.15
+            duration_score * 0.30
+            + density_score * 0.25
+            + conf_score * 0.20
+            + sustainability_score * 0.15
             + type_score * 0.10
         ) * 100
 
-        logger.info(f"Probability calc: {action} dur={clip_duration:.1f}s "
-                     f"density={density:.2f} conf={confidence_score:.2f} "
-                     f"sustain={sustainability:.2f} type={type_score:.2f} "
+        probability = max(0.0, min(100.0, round(probability, 1)))
+
+        logger.info(f"Probability calc: {action} dur={clip_duration:.1f}s→{duration_score:.2f} "
+                     f"density={density_score:.2f} conf={conf_score:.2f} "
+                     f"sustain={sustainability_score:.2f} type={type_score:.2f} "
                      f"→ {probability:.1f}%")
 
-        return round(max(0, min(100, probability)), 1)
+        return probability
