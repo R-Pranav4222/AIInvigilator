@@ -19,8 +19,25 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # ========================
+# GPU CONFIGURATION (import from gpu_config for CUDA + FP16)
+# ========================
+_ml_dir = os.path.dirname(os.path.abspath(__file__))
+if _ml_dir not in sys.path:
+    sys.path.insert(0, _ml_dir)
+
+try:
+    from gpu_config import DEVICE, USE_HALF_PRECISION, gpu_config
+    GPU_DEVICE = DEVICE
+    USE_FP16 = USE_HALF_PRECISION
+    logger.info(f"GPU config loaded: device={GPU_DEVICE}, FP16={USE_FP16}")
+except Exception as e:
+    GPU_DEVICE = 'cpu'
+    USE_FP16 = False
+    logger.warning(f"GPU config not available, using CPU: {e}")
+
+# ========================
 # GLOBAL MODEL CACHE (shared across all FrameProcessor instances)
-# Models are loaded once, used by all concurrent streams
+# Models are loaded once on GPU, used by all concurrent streams
 # ========================
 _model_lock = threading.Lock()
 _pose_model = None
@@ -30,7 +47,7 @@ _models_warmed = False  # True after first dummy inference
 
 
 def _load_models():
-    """Load YOLO models once (thread-safe singleton)"""
+    """Load YOLO models once on GPU (thread-safe singleton)"""
     global _pose_model, _mobile_model, _models_loaded
 
     if _models_loaded:
@@ -50,7 +67,7 @@ def _load_models():
                 paths = model_config.get_model_paths()
                 pose_path = paths["pose_detection"]
                 mobile_path = paths["object_detection"]
-                logger.info(f"Loaded model config: {paths.get('description', 'Unknown')}")
+                logger.info(f"Model config: {paths.get('description', 'Unknown')}")
             except ImportError:
                 pose_path = os.path.join(base_dir, "yolov8n-pose.pt")
                 mobile_path = os.path.join(base_dir, "yolo11n.pt")
@@ -58,8 +75,17 @@ def _load_models():
 
             _pose_model = YOLO(pose_path)
             _mobile_model = YOLO(mobile_path)
+
+            # Move models to GPU if available
+            if GPU_DEVICE != 'cpu':
+                _pose_model.to(GPU_DEVICE)
+                _mobile_model.to(GPU_DEVICE)
+                logger.info(f"ML models loaded on {GPU_DEVICE} "
+                           f"(FP16={'enabled' if USE_FP16 else 'disabled'})")
+            else:
+                logger.info("ML models loaded on CPU")
+
             _models_loaded = True
-            logger.info("ML models loaded successfully for frame processing")
 
         except Exception as e:
             logger.error(f"Failed to load ML models: {e}")
@@ -67,18 +93,18 @@ def _load_models():
 
 
 def prewarm_models():
-    """Pre-load and warm up models with a dummy inference so first real frame is fast."""
+    """Pre-load and warm up models on GPU with a dummy inference."""
     global _models_warmed
     if _models_warmed:
         return
     try:
         _load_models()
-        # Run a dummy inference to JIT-compile / warm GPU caches
+        # Run dummy inference to JIT-compile CUDA kernels + warm GPU caches
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
-        _pose_model(dummy, verbose=False, imgsz=320)    # Match ML_POSE_IMGSZ
-        _mobile_model(dummy, verbose=False, imgsz=640)   # Match ML_MOBILE_IMGSZ
+        _pose_model(dummy, verbose=False, imgsz=320, half=USE_FP16)
+        _mobile_model(dummy, verbose=False, imgsz=640, half=USE_FP16)
         _models_warmed = True
-        logger.info("ML models pre-warmed with dummy inference")
+        logger.info(f"ML models pre-warmed on {GPU_DEVICE} with FP16={USE_FP16}")
     except Exception as e:
         logger.warning(f"Model pre-warm failed (will load on first use): {e}")
 
@@ -524,8 +550,9 @@ class FrameProcessor:
                 self._ml_frame_count = 0
                 self._ml_start_time = now
 
-            # ---- YOLO Pose Detection (320px for speed — skeleton doesn't need high res) ----
-            pose_results = _pose_model(frame, verbose=False, conf=0.3, imgsz=self.ML_POSE_IMGSZ)
+            # ---- YOLO Pose Detection (320px + FP16 GPU for max speed) ----
+            pose_results = _pose_model(frame, verbose=False, conf=0.3,
+                                       imgsz=self.ML_POSE_IMGSZ, half=USE_FP16)
             all_keypoints = []
             all_wrists = []
             all_boxes = []
@@ -568,10 +595,11 @@ class FrameProcessor:
             if len(all_wrists) >= 2:
                 passing_detected, _ = detect_passing_paper(all_wrists, [])
 
-            # ---- YOLO Object Detection (mobile phone) — 640px for small objects ----
+            # ---- YOLO Object Detection (mobile phone) — 640px + FP16 GPU ----
             mobile_detected = False
             mobile_conf = 0.0
-            obj_results = _mobile_model(frame, verbose=False, conf=0.25, imgsz=self.ML_MOBILE_IMGSZ)
+            obj_results = _mobile_model(frame, verbose=False, conf=0.25,
+                                        imgsz=self.ML_MOBILE_IMGSZ, half=USE_FP16)
 
             for result in obj_results:
                 if result.boxes is not None:

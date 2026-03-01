@@ -36,7 +36,7 @@ class GPUConfig:
     def _setup_device(self):
         """Setup and configure CUDA device"""
         if not self.use_gpu or not torch.cuda.is_available():
-            print("⚠️ GPU not available or disabled, using CPU")
+            print("[WARN] GPU not available or disabled, using CPU")
             print("   For GPU acceleration, install: pip install torch --index-url https://download.pytorch.org/whl/cu118")
             return 'cpu'
         
@@ -52,7 +52,7 @@ class GPUConfig:
             
             # Print GPU info
             print("\n" + "="*60)
-            print("🚀 GPU ACCELERATION ENABLED")
+            print(">>> GPU ACCELERATION ENABLED <<<")
             print("="*60)
             print(f"   Device: {torch.cuda.get_device_name(self.device_id)}")
             print(f"   CUDA Version: {torch.version.cuda}")
@@ -65,7 +65,7 @@ class GPUConfig:
             return device
             
         except Exception as e:
-            print(f"⚠️ Error setting up GPU: {e}")
+            print(f"[WARN] Error setting up GPU: {e}")
             print("   Falling back to CPU")
             return 'cpu'
     
@@ -90,11 +90,11 @@ class GPUConfig:
             
             # Don't convert model to half precision here
             # YOLO models handle FP16 conversion internally when half=True is passed during inference
-            print(f"✅ Model loaded on {self.device}")
+            print(f"[OK] Model loaded on {self.device}")
             
             return model
         except Exception as e:
-            print(f"⚠️ Error optimizing model: {e}")
+            print(f"[WARN] Error optimizing model: {e}")
             return model
     
     def get_memory_stats(self):
@@ -111,7 +111,7 @@ class GPUConfig:
         """Clear GPU cache to free memory"""
         if self.device_type == 'cuda':
             torch.cuda.empty_cache()
-            print("🗑️  GPU cache cleared")
+            print("[OK] GPU cache cleared")
 
 # Global configuration instance
 gpu_config = GPUConfig()
