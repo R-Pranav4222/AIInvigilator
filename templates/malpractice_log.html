@@ -89,6 +89,7 @@
     border-radius: var(--radius-sm);
     transition: var(--transition-base);
   }
+
   .btn-download:hover {
     box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
     transform: translateY(-1px);
@@ -104,6 +105,7 @@
     border-radius: var(--radius-sm);
     transition: var(--transition-base);
   }
+
   .btn-delete:hover {
     background: var(--danger) !important;
     color: #fff !important;
@@ -121,6 +123,7 @@
     border-color: var(--success) !important;
     color: #fff !important;
   }
+
   .btn-reviewed-no {
     background: var(--danger) !important;
     border-color: var(--danger) !important;
@@ -203,16 +206,19 @@
     text-align: center;
     font-family: var(--font-mono);
   }
+
   .prob-high {
     background: var(--danger-dim);
     color: var(--danger);
     border: 1px solid rgba(239, 68, 68, 0.3);
   }
+
   .prob-medium {
     background: var(--warning-dim);
     color: var(--warning);
     border: 1px solid rgba(245, 158, 11, 0.3);
   }
+
   .prob-low {
     background: var(--success-dim);
     color: var(--success);
@@ -229,11 +235,13 @@
     border-radius: var(--radius-sm);
     transition: var(--transition-base);
   }
+
   .btn-ai-actions:hover {
     box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
     transform: translateY(-1px);
     color: var(--text-inverse) !important;
   }
+
   .ai-modal-icon {
     font-size: 1.1rem;
     margin-right: 4px;
@@ -249,11 +257,13 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+
   .source-live {
     background: rgba(239, 68, 68, 0.12);
     color: var(--danger);
     border: 1px solid rgba(239, 68, 68, 0.25);
   }
+
   .source-recorded {
     background: rgba(99, 102, 241, 0.12);
     color: #818cf8;
@@ -270,6 +280,7 @@
     border-radius: var(--radius-sm);
     transition: var(--transition-base);
   }
+
   .btn-complete-review:hover {
     box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
     transform: translateY(-1px);
@@ -298,6 +309,7 @@
     <div class="filter-bar mb-4">
       <form method="get">
         <input type="hidden" name="review" value="{{ review_filter|default:'not_reviewed' }}">
+        <input type="hidden" id="sortHidden" value="{{ sort_order|default:'newest' }}">
         {% if request.user.is_superuser %}
         <!-- ADMIN FILTERS (2 Rows) -->
         <div class="form-row">
@@ -306,9 +318,9 @@
             <label for="date">Filter by Date:</label>
             <input type="date" name="date" id="date" class="form-control" value="{{ date_filter }}">
           </div>
-          <!-- Filter by Time (FN & AN) -->
+          <!-- Filter by Session (FN & AN) -->
           <div class="form-group col-md-2">
-            <label for="time">Filter by Time:</label>
+            <label for="time">Session:</label>
             <select name="time" id="time" class="form-control">
               <option value="">All</option>
               <option value="FN" {% if time_filter == 'FN' %}selected{% endif %}>FN (Before Noon)</option>
@@ -383,6 +395,14 @@
               <option value="unassigned" {% if assignment_filter == 'unassigned' %}selected{% endif %}>Unassigned</option>
             </select>
           </div>
+          <!-- Filter by Time -->
+          <div class="form-group col-md-3">
+            <label for="sort">Filter by Time:</label>
+            <select name="sort" id="sort" class="form-control">
+              <option value="newest" {% if sort_order == 'newest' %}selected{% endif %}>Newest</option>
+              <option value="oldest" {% if sort_order == 'oldest' %}selected{% endif %}>Oldest</option>
+            </select>
+          </div>
           <!-- Apply Button -->
           <div class="form-group col-md-1 d-flex align-items-end">
             <button type="submit" class="btn btn-primary w-100">
@@ -398,9 +418,9 @@
             <label for="date">Filter by Date:</label>
             <input type="date" name="date" id="date" class="form-control" value="{{ date_filter }}">
           </div>
-          <!-- Filter by Time -->
+          <!-- Filter by Session -->
           <div class="form-group col-md-2">
-            <label for="time">Filter by Time:</label>
+            <label for="time">Session:</label>
             <select name="time" id="time" class="form-control">
               <option value="">All</option>
               <option value="FN" {% if time_filter == 'FN' %}selected{% endif %}>FN</option>
@@ -434,6 +454,14 @@
               <option value="">All</option>
               <option value="live" {% if source_filter == 'live' %}selected{% endif %}>Live</option>
               <option value="recorded" {% if source_filter == 'recorded' %}selected{% endif %}>Recorded</option>
+            </select>
+          </div>
+          <!-- Filter by Time -->
+          <div class="form-group col-md-2">
+            <label for="sort">Filter by Time:</label>
+            <select name="sort" id="sort" class="form-control">
+              <option value="newest" {% if sort_order == 'newest' %}selected{% endif %}>Newest</option>
+              <option value="oldest" {% if sort_order == 'oldest' %}selected{% endif %}>Oldest</option>
             </select>
           </div>
           <!-- Apply Button -->
@@ -490,8 +518,7 @@
           </a>
           <div class="dropdown-divider"></div>
           <a class="dropdown-item" href="#" onclick="showAIActionModal('dismiss_low'); return false;">
-            <i class="fas fa-times-circle text-danger"></i> Dismiss Low Probability Logs (<50%)
-          </a>
+            <i class="fas fa-times-circle text-danger"></i> Dismiss Low Probability Logs (<50%) </a>
         </div>
       </div>
       {% endif %}
@@ -566,22 +593,22 @@
             <td>{{ i.malpractice }}</td>
             <td>
               {% if i.probability_score != None %}
-                {% if i.probability_score >= 70 %}
-                  <span class="prob-badge prob-high">{{ i.probability_score }}%</span>
-                {% elif i.probability_score >= 50 %}
-                  <span class="prob-badge prob-medium">{{ i.probability_score }}%</span>
-                {% else %}
-                  <span class="prob-badge prob-low">{{ i.probability_score }}%</span>
-                {% endif %}
+              {% if i.probability_score >= 70 %}
+              <span class="prob-badge prob-high">{{ i.probability_score }}%</span>
+              {% elif i.probability_score >= 50 %}
+              <span class="prob-badge prob-medium">{{ i.probability_score }}%</span>
               {% else %}
-                <span class="text-muted">-</span>
+              <span class="prob-badge prob-low">{{ i.probability_score }}%</span>
+              {% endif %}
+              {% else %}
+              <span class="text-muted">-</span>
               {% endif %}
             </td>
             <td>
               {% if i.source_type == 'live' %}
-                <span class="source-badge source-live"><i class="fas fa-video"></i> Live</span>
+              <span class="source-badge source-live"><i class="fas fa-video"></i> Live</span>
               {% else %}
-                <span class="source-badge source-recorded"><i class="fas fa-upload"></i> Recorded</span>
+              <span class="source-badge source-recorded"><i class="fas fa-upload"></i> Recorded</span>
               {% endif %}
             </td>
             <td>
@@ -600,19 +627,19 @@
             </td>
             <td>
               {% if i.proof %}
-                {% if i.proof|slice:"-4:" == ".jpg" or i.proof|slice:"-4:" == ".png" or i.proof|slice:"-5:" == ".jpeg" %}
-                <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#proofModal"
-                  onclick="viewProofImage('/media/{{ i.proof }}')">
-                  <i class="fas fa-image" style="margin-right:4px;"></i> View
-                </button>
-                {% else %}
-                <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#videoModal"
-                  onclick="playVideo('{{ i.proof }}')">
-                  <i class="fas fa-play" style="margin-right:4px;"></i> View
-                </button>
-                {% endif %}
+              {% if i.proof|slice:"-4:" == ".jpg" or i.proof|slice:"-4:" == ".png" or i.proof|slice:"-5:" == ".jpeg" %}
+              <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#proofModal"
+                onclick="viewProofImage('/media/{{ i.proof }}')">
+                <i class="fas fa-image" style="margin-right:4px;"></i> View
+              </button>
               {% else %}
-                <span class="text-muted">No proof</span>
+              <button type="button" class="btn btn-secondary" data-toggle="modal" data-target="#videoModal"
+                onclick="playVideo('{{ i.proof }}')">
+                <i class="fas fa-play" style="margin-right:4px;"></i> View
+              </button>
+              {% endif %}
+              {% else %}
+              <span class="text-muted">No proof</span>
               {% endif %}
             </td>
             <td>
@@ -678,7 +705,8 @@
   <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
     <div class="modal-content">
       <div class="modal-header" style="background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);">
-        <h5 class="modal-title" id="videoModalLabel"><i class="fas fa-play-circle" style="margin-right:6px;color:var(--accent-cyan);"></i>Video Analysis</h5>
+        <h5 class="modal-title" id="videoModalLabel"><i class="fas fa-play-circle"
+            style="margin-right:6px;color:var(--accent-cyan);"></i>Video Analysis</h5>
         <button type="button" class="close" data-dismiss="modal" aria-label="Close">
           <span aria-hidden="true">&times;</span>
         </button>
@@ -699,7 +727,8 @@
   <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
     <div class="modal-content">
       <div class="modal-header" style="background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);">
-        <h5 class="modal-title" id="proofModalLabel"><i class="fas fa-camera" style="margin-right:6px;color:var(--accent-cyan);"></i>Detection Snapshot</h5>
+        <h5 class="modal-title" id="proofModalLabel"><i class="fas fa-camera"
+            style="margin-right:6px;color:var(--accent-cyan);"></i>Detection Snapshot</h5>
         <button type="button" class="close" data-dismiss="modal" aria-label="Close">
           <span aria-hidden="true">&times;</span>
         </button>
@@ -758,6 +787,11 @@
       // Update the URL parameter without reloading.
       const url = new URL(window.location.href);
       url.searchParams.set("review", currentState);
+      // Preserve current sort order
+      const sortSelect = document.getElementById("sort");
+      if (sortSelect) {
+        url.searchParams.set("sort", sortSelect.value);
+      }
       history.pushState({}, "", url.href);
 
       // Fetch the updated logs HTML and update the table container.
@@ -1004,33 +1038,33 @@
       },
       body: JSON.stringify({ action: pendingAIAction })
     })
-    .then(function(response) { return response.json(); })
-    .then(function(data) {
-      confirmBtn.disabled = false;
-      confirmBtn.innerHTML = '<i class="fas fa-robot"></i> Confirm';
-      // Wait for modal to fully close before showing alert/reload
-      $('#aiActionModal').on('hidden.bs.modal', function () {
-        $(this).off('hidden.bs.modal'); // Remove handler to avoid stacking
-        if (data.status === 'success') {
-          if (data.count > 0) {
-            alert(data.message);
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = '<i class="fas fa-robot"></i> Confirm';
+        // Wait for modal to fully close before showing alert/reload
+        $('#aiActionModal').on('hidden.bs.modal', function () {
+          $(this).off('hidden.bs.modal'); // Remove handler to avoid stacking
+          if (data.status === 'success') {
+            if (data.count > 0) {
+              alert(data.message);
+            }
+            location.reload();
+          } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
           }
-          location.reload();
-        } else {
-          alert('Error: ' + (data.message || 'Unknown error'));
-        }
+        });
+        $('#aiActionModal').modal('hide');
+      })
+      .catch(function (err) {
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = '<i class="fas fa-robot"></i> Confirm';
+        $('#aiActionModal').on('hidden.bs.modal', function () {
+          $(this).off('hidden.bs.modal');
+          alert('Request failed: ' + err);
+        });
+        $('#aiActionModal').modal('hide');
       });
-      $('#aiActionModal').modal('hide');
-    })
-    .catch(function(err) {
-      confirmBtn.disabled = false;
-      confirmBtn.innerHTML = '<i class="fas fa-robot"></i> Confirm';
-      $('#aiActionModal').on('hidden.bs.modal', function () {
-        $(this).off('hidden.bs.modal');
-        alert('Request failed: ' + err);
-      });
-      $('#aiActionModal').modal('hide');
-    });
   }
 
   // DELETE MALPRACTICE
@@ -1150,10 +1184,10 @@
 
   // COMPLETE REVIEW SESSION
   // Update hall info when teacher is selected
-  document.addEventListener('DOMContentLoaded', function() {
+  document.addEventListener('DOMContentLoaded', function () {
     const reviewTeacherSelect = document.getElementById('reviewTeacher');
     if (reviewTeacherSelect) {
-      reviewTeacherSelect.addEventListener('change', function() {
+      reviewTeacherSelect.addEventListener('change', function () {
         const selected = this.options[this.selectedIndex];
         const hallName = selected.getAttribute('data-hall-name');
         const hallInfo = document.getElementById('reviewHallInfo');
@@ -1202,30 +1236,30 @@
       },
       body: JSON.stringify(payload)
     })
-    .then(response => response.json())
-    .then(data => {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-envelope"></i> Complete & Notify';
+      .then(response => response.json())
+      .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-envelope"></i> Complete & Notify';
 
-      $('#completeReviewModal').on('hidden.bs.modal', function() {
-        $(this).off('hidden.bs.modal');
-        if (data.success) {
-          alert(data.message);
-        } else {
-          alert('Error: ' + (data.error || 'Unknown error'));
-        }
+        $('#completeReviewModal').on('hidden.bs.modal', function () {
+          $(this).off('hidden.bs.modal');
+          if (data.success) {
+            alert(data.message);
+          } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+          }
+        });
+        $('#completeReviewModal').modal('hide');
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-envelope"></i> Complete & Notify';
+        $('#completeReviewModal').on('hidden.bs.modal', function () {
+          $(this).off('hidden.bs.modal');
+          alert('Request failed: ' + err);
+        });
+        $('#completeReviewModal').modal('hide');
       });
-      $('#completeReviewModal').modal('hide');
-    })
-    .catch(err => {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-envelope"></i> Complete & Notify';
-      $('#completeReviewModal').on('hidden.bs.modal', function() {
-        $(this).off('hidden.bs.modal');
-        alert('Request failed: ' + err);
-      });
-      $('#completeReviewModal').modal('hide');
-    });
   }
 
 
@@ -1373,7 +1407,9 @@
           <label for="reviewDate"><strong>Filter by Date (optional):</strong></label>
           <input type="date" class="form-control" id="reviewDate">
         </div>
-        <div id="reviewHallInfo" style="display:none; background:var(--bg-surface); border-radius:var(--radius-sm); border:1px solid var(--border-subtle);" class="mt-2 p-2">
+        <div id="reviewHallInfo"
+          style="display:none; background:var(--bg-surface); border-radius:var(--radius-sm); border:1px solid var(--border-subtle);"
+          class="mt-2 p-2">
           <small class="text-muted">Lecture Hall: <strong id="reviewHallName"></strong></small>
         </div>
       </div>
