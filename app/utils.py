@@ -30,7 +30,11 @@ RUNNING_SCRIPTS = {}
 def ssh_run_script(ip, username, password, script_path, use_venv=True, venv_path=None):
     try:
         ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # WARNING: AutoAddPolicy trusts unknown hosts. For production,
+        # use RejectPolicy with a known_hosts file:
+        #   ssh.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
+        #   ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+        ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
         ssh.connect(ip, username=username, password=password)
 
         # Get the directory and file name of the script
@@ -67,23 +71,29 @@ def ssh_run_script(ip, username, password, script_path, use_venv=True, venv_path
         return False, str(e)
 
 
+# Whitelist of allowed ML scripts that can be executed
+ALLOWED_SCRIPTS = {
+    'front.py', 'top_corner.py', 'hand_raise.py', 'leaning.py',
+    'passing_paper.py', 'mobile_detection.py', 'hybrid_detector.py',
+    'process_uploaded_video.py', 'process_uploaded_video_stream.py',
+}
+
 def local_run_script(script_path):
     try:
         # Get the directory and file name from the script_path
-        script_dir = os.path.dirname(script_path)
+        script_dir = os.path.dirname(os.path.abspath(script_path))
         script_name = os.path.basename(script_path)
 
-        # Build the command without virtual environment activation.
-        command = 'cmd /c "cd /d \"{}\" && python \"{}\""'.format(
-            script_dir, script_name
-        )
+        # Validate script name against whitelist to prevent command injection
+        if script_name not in ALLOWED_SCRIPTS:
+            return False, f"Script '{script_name}' is not in the allowed scripts list."
 
-        # Start the process
+        # Use list form (no shell=True) to prevent command injection
         process = subprocess.Popen(
-            command,
+            ['python', script_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            shell=True,
+            cwd=script_dir,
             text=True
         )
 

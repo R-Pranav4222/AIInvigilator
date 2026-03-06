@@ -1,0 +1,86 @@
+How to Demo (Super Simple)
+The Setup
+Your laptop = The server (runs the project + ML processing)
+Your friends' devices (laptop/phone/anything with a browser) = They just open a URL in their browser
+Step-by-Step
+Step 1: Find your laptop's WiFi IP address
+
+Open a terminal and run:
+
+ipconfig
+Look for your WiFi adapter's IPv4 Address — it'll be something like 192.168.1.105 or 192.168.0.15.
+
+Step 2: Make sure the server accepts external connections
+
+Right now python manage.py runserver only listens on 127.0.0.1 (localhost = only your laptop). You need to run it as:
+
+python manage.py runserver 0.0.0.0:8000
+The 0.0.0.0 means "accept connections from any device on the network."
+
+Step 3: Connect all devices to the SAME WiFi
+
+You, your two friends, and your teacher's device must all be on the same WiFi network.
+
+Step 4: Your friends open a browser and go to:
+
+http://192.168.1.105:8000/
+(Replace with YOUR actual IP from Step 1)
+
+That's it! They see the full app — no downloads, no installs.
+
+Demo Roles
+Person	What they do	URL
+You (Admin)	Open browser → login as rpranav → go to Cameras page	http://192.168.1.105:8000/run_cameras/
+Friend 1 (Teacher)	Open browser on THEIR phone/laptop → login as subashk → go to Camera page	http://192.168.1.105:8000/teacher_cameras/
+Friend 2 (Teacher)	Same, login as farisarakkal	http://192.168.1.105:8000/teacher_cameras/
+Demo Flow
+You (admin) click "Start All Cameras" on your screen
+Both friends get a popup on their browser asking to accept
+They click Accept → their webcam turns on → ML processing starts
+You see their live camera feeds in the admin grid!
+They can do malpractice actions (raise hand, hold phone up) → detections appear
+Friend clicks "Stop Camera" button → their feed stops on both sides
+However, I need to make one small config change — ALLOWED_HOSTS in your Django settings needs to allow connections from your network IP. Let me check:
+
+Searched
+ALLOWED_HOSTS
+0 results
+Searched
+ALLOWED_HOSTS
+1 result
+ALLOWED_HOSTS = ['*'] — already set to accept all connections. You're all set!
+
+Here's the super simple summary:
+
+🎯 Demo Checklist
+What you need:
+✅ Your laptop (with the project already set up)
+✅ All 3 people on the same WiFi
+✅ Friends just need a browser — Chrome or Edge on their phone or laptop
+❌ Friends do NOT need to download or install anything
+Commands to run on YOUR laptop:
+1. Find your IP:
+
+ipconfig
+Note the IPv4 Address under your WiFi adapter (e.g., 192.168.1.105)
+
+2. Start the server:
+
+cd e:\witcher\AIINVIGILATOR\AIINVIGILATOR
+python manage.py runserver 0.0.0.0:8000
+3. Tell your friends to open this URL in their browser:
+
+http://<YOUR-IP>:8000/
+Logins:
+Person	Username	Password	Role
+You	rpranav	robertlewandowski	Admin
+Friend 1	subashk	subusubash	Teacher
+Friend 2	farisarakkal	farisabdul	Teacher
+Demo script:
+You login → go to Cameras page → click "Start All Cameras"
+Friends login on their phones → get popup → click Accept
+Their webcam turns on → ML skeleton overlay appears → you see their live feed in admin grid
+Friends do actions (raise hand, hold phone) → detections show up in logs
+Friends can click "Stop Camera" to stop their feed
+You can also show the recorded video upload feature separately
+Important: The key thing is 0.0.0.0:8000 instead of the normal runserver. That's what makes it accessible to other devices on the network!

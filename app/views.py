@@ -6,7 +6,7 @@ from threading import Event, Thread
 from django.http import JsonResponse, FileResponse, HttpResponse, StreamingHttpResponse
 from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from django.contrib.auth.models import User
 from .models import TeacherProfile
 import json
@@ -421,6 +421,7 @@ def malpractice_log(request):
     review_filter = request.GET.get('review', '').strip() or 'not_reviewed'
     probability_filter = request.GET.get('probability', '').strip()
     source_filter = request.GET.get('source', '').strip()
+    sort_order = request.GET.get('sort', '').strip() or 'newest'
 
 
     # Base Queryset based on user role
@@ -478,7 +479,15 @@ def malpractice_log(request):
         if source_filter in ('live', 'recorded'):
             logs = logs.filter(source_type=source_filter)
 
-    logs = logs.order_by('-date', '-time')
+    # Apply sort ordering
+    if sort_order == 'oldest':
+        logs = logs.order_by('date', 'time')
+    elif sort_order == 'prob_high':
+        logs = logs.order_by('-probability_score', '-date', '-time')
+    elif sort_order == 'prob_low':
+        logs = logs.order_by('probability_score', '-date', '-time')
+    else:  # 'newest' (default)
+        logs = logs.order_by('-date', '-time')
 
     # Update session record count to trigger alert if new logs appear
     record_count = logs.count()
@@ -504,6 +513,7 @@ def malpractice_log(request):
         'review_filter': review_filter,
         'probability_filter': probability_filter,
         'source_filter': source_filter,
+        'sort_order': sort_order,
         'faculty_list': User.objects.filter(teacherprofile__isnull=False, is_superuser=False),
         'buildings': LectureHall.objects.values_list('building', flat=True).distinct(),
     }
@@ -562,10 +572,10 @@ def send_notifications_background(log_id):
         print(f"[ERROR] Background notification failed: {e}")
 
 
+@login_required
+@user_passes_test(is_admin)
+@require_POST
 def review_malpractice(request):
-    if request.method != 'POST':
-        return JsonResponse({'success': False, 'error': 'Invalid request method'})
-
     try:
         data = json.loads(request.body)
         proof_filename = data.get('proof')
@@ -604,9 +614,9 @@ def review_malpractice(request):
         return JsonResponse({'success': False, 'error': 'Internal server error'})
 
 
-@csrf_exempt
 @login_required
 @user_passes_test(is_admin)
+@require_POST
 def complete_review_session(request):
     """Complete a review session: create ReviewSession record, set teacher_visible=True
     for all reviewed malpractice logs of a given teacher/hall, and send summary email."""
@@ -720,9 +730,9 @@ def complete_review_session(request):
         return JsonResponse({'success': False, 'error': 'Internal server error'})
 
 
-@csrf_exempt
 @login_required
 @user_passes_test(is_admin)
+@require_POST
 def ai_bulk_action(request):
     """Bulk action based on AI probability scores.
     
@@ -792,12 +802,10 @@ def ai_bulk_action(request):
         return JsonResponse({'status': 'error', 'message': 'Internal server error'})
 
 
-@csrf_exempt
 @login_required
+@require_POST
 def delete_malpractice(request, log_id):
     """Delete a malpractice log - accessible to both admin and teachers"""
-    if request.method != 'POST':
-        return JsonResponse({'success': False, 'error': 'Invalid request method'}, status=405)
 
     try:
         # Get the malpractice log
@@ -1119,33 +1127,8 @@ def trigger_camera_scripts(request):
                 "script_path": "e:\\witcher\\AIINVIGILATOR\\AIINVIGILATOR\\ML\\front.py",
                 "mode": "local"
             },
-            # {
-            #     "name": "Top Corner Angle - Remote Client(Allen)",
-            #     "ip": "192.168.154.9",
-            #     "username": "allen",
-            #     "password": "5213",
-            #     "script_path": "D:\\application\\ML\\top_corner.py",
-            #     "mode": "remote",
-            #     "use_venv": False  # disable venv activation for this host
-            # },
-            # {
-            #     "name": "Front Angle - Remote Client(Shruti)",
-            #     "ip": "192.168.39.145",
-            #     "username": "SHRUTI S",
-            #     "password": "1234shibu",
-            #     "script_path": "C:\\Users\\SHRUTI S\\Documents\\Repos\\AIInvigilator\\application\\application\\ML\\front.py",
-            #     "mode": "remote",
-            #     "use_venv": False 
-            # },
-            # {
-            #     "name": "Front Angle - Remote Client(Noel)",
-            #     "ip": "192.168.1.8",
-            #     "username": "noelmathen",
-            #     "password": "134652",
-            #     "mode": "remote",
-            #     "script_path": "C:\\Users\\noelmathen\\Documents\\PROJECTS\\AIInvigilator\\ML\\front.py",
-            #     "use_venv": True
-            # }
+            # Remote clients: configure via environment variables or admin panel
+            # Never hardcode credentials in source code
         ]
 
         # Function to run a given configuration
@@ -1238,6 +1221,23 @@ def process_video(request):
             filename = f"{timestamp}_{video_file.name}"
             filepath = os.path.join(upload_dir, filename)
             
+            # Validate file type (only accept video files)
+            allowed_types = ['video/mp4', 'video/avi', 'video/x-msvideo', 'video/quicktime',
+                             'video/x-matroska', 'video/webm', 'video/mpeg']
+            if video_file.content_type not in allowed_types:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Invalid file type. Only video files are accepted.'
+                }, status=400)
+            
+            # Limit file size (500MB max)
+            max_size = 500 * 1024 * 1024
+            if video_file.size > max_size:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'File too large. Maximum size is 500MB.'
+                }, status=400)
+            
             # Save uploaded file
             with open(filepath, 'wb+') as destination:
                 for chunk in video_file.chunks():
@@ -1258,9 +1258,10 @@ def process_video(request):
             })
             
         except Exception as e:
+            print(f'[ERROR] Video upload failed: {e}')
             return JsonResponse({
                 'status': 'error',
-                'message': str(e)
+                'message': 'Video upload failed. Please try again.'
             }, status=500)
     
     return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)

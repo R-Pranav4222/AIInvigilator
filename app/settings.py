@@ -31,7 +31,7 @@ SECRET_KEY = env('SECRET_KEY', default='django-insecure-build-dummy-key-12345678
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = env('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
 
 
 # Application definition
@@ -69,8 +69,8 @@ CHANNEL_LAYERS = {
 }
 
 MIDDLEWARE = [
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -191,3 +191,46 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 TWILIO_ACCOUNT_SID = env('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = env('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = env('TWILIO_PHONE_NUMBER')
+
+
+# ======================
+# SECURITY SETTINGS
+# ======================
+
+# Prevent clickjacking
+X_FRAME_OPTIONS = 'DENY'
+
+# Prevent MIME-type sniffing
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# XSS filter (legacy browsers)
+SECURE_BROWSER_XSS_FILTER = True
+
+# Session security
+SESSION_COOKIE_AGE = 3600  # 1 hour session timeout
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # Must be False so JS can read the CSRF token
+
+# Production-only settings (activated when DEBUG=False)
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Login URL for @login_required redirect
+LOGIN_URL = '/login/'
+
+# WebSocket allowed origins (used by Django Channels)
+ALLOWED_WEBSOCKET_ORIGINS = env(
+    'ALLOWED_WEBSOCKET_ORIGINS',
+    default='http://localhost:8000,http://127.0.0.1:8000'
+).split(',')
+
+# File upload size limit (50MB for general, 500MB handled in view for video)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800  # 50MB
