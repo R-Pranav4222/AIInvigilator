@@ -325,23 +325,6 @@ class LightweightHybridDetector:
                         # Use as proxy for suspicious if not already detected  
                         if not detections['suspicious'][0] and conf > threshold * 1.3:
                             detections['suspicious'] = (True, conf, bbox)
-                    
-                    # Proxy detection: Use 'cheating' (30k examples) as proxy for poorly-trained classes
-                    elif class_name == 'cheating':
-                        # Map 'cheating' to cheat_material and suspicious since they lack training data
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        bbox = [int(x1), int(y1), int(x2), int(y2)]
-                        
-                        # Use as proxy for cheat_material if not already detected
-                        if not detections['cheat_material'][0]:
-                            # Lower threshold since it's a proxy
-                            if conf > threshold * 1.2:  # Require 20% higher confidence for proxy
-                                detections['cheat_material'] = (True, conf, bbox)
-                        
-                        # Use as proxy for suspicious if not already detected  
-                        if not detections['suspicious'][0]:
-                            if conf > threshold * 1.2:
-                                detections['suspicious'] = (True, conf, bbox)
         
         except Exception as e:
             pass

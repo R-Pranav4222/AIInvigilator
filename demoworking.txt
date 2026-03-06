@@ -28,6 +28,23 @@ http://192.168.1.105:8000/
 
 That's it! They see the full app — no downloads, no installs.
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Demo Roles
 Person	What they do	URL
 You (Admin)	Open browser → login as rpranav → go to Cameras page	http://192.168.1.105:8000/run_cameras/

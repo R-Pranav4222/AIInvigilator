@@ -20,6 +20,7 @@ from django.contrib.auth.forms import PasswordChangeForm
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.admin.views.decorators import staff_member_required
 from .utils import ssh_run_script, local_run_script
+import logging
 import threading
 import asyncio
 import os
@@ -28,6 +29,8 @@ import tempfile
 from .utils import RUNNING_SCRIPTS 
 import time
 import cv2
+
+logger = logging.getLogger(__name__)
 
 # Global stop event
 stop_event = Event()
@@ -88,10 +91,12 @@ def calculate_retroactive_probability(log):
 
 def ensure_probability_scores(logs_queryset):
     """Fill in probability scores for any logs that don't have one yet."""
-    logs_without_score = logs_queryset.filter(probability_score__isnull=True)
+    logs_without_score = list(logs_queryset.filter(probability_score__isnull=True))
+    if not logs_without_score:
+        return
     for log in logs_without_score:
         log.probability_score = calculate_retroactive_probability(log)
-        log.save(update_fields=['probability_score'])
+    MalpraticeDetection.objects.bulk_update(logs_without_score, ['probability_score'], batch_size=200)
 
 def is_admin(user):
     return user.is_superuser
@@ -390,10 +395,9 @@ def serve_video(request):
         content_length = range_end - range_start + 1
         
         # Stream the requested range
-        f = open(serve_path, 'rb')
-        f.seek(range_start)
-        data = f.read(content_length)
-        f.close()
+        with open(serve_path, 'rb') as f:
+            f.seek(range_start)
+            data = f.read(content_length)
         
         response = HttpResponse(data, content_type='video/mp4', status=206)
         response['Content-Range'] = f'bytes {range_start}-{range_end}/{file_size}'
@@ -424,9 +428,11 @@ def malpractice_log(request):
     sort_order = request.GET.get('sort', '').strip() or 'newest'
 
 
-    # Base Queryset based on user role
+    # Base Queryset based on user role — use select_related to avoid N+1 queries
     if request.user.is_superuser:
-        logs = MalpraticeDetection.objects.all()
+        logs = MalpraticeDetection.objects.select_related(
+            'lecture_hall', 'lecture_hall__assigned_teacher', 'uploaded_by'
+        ).all()
         # Apply review filter for admin
         if review_filter.lower() == 'reviewed':
             logs = logs.filter(verified=True)
@@ -435,7 +441,9 @@ def malpractice_log(request):
     else:
         # Teachers only see logs that admin has made visible after review
         assigned_halls = LectureHall.objects.filter(assigned_teacher=request.user)
-        logs = MalpraticeDetection.objects.filter(
+        logs = MalpraticeDetection.objects.select_related(
+            'lecture_hall', 'lecture_hall__assigned_teacher', 'uploaded_by'
+        ).filter(
             lecture_hall__in=assigned_halls,
             verified=True,
             is_malpractice=True,
@@ -514,7 +522,9 @@ def malpractice_log(request):
         'probability_filter': probability_filter,
         'source_filter': source_filter,
         'sort_order': sort_order,
-        'faculty_list': User.objects.filter(teacherprofile__isnull=False, is_superuser=False),
+        'faculty_list': User.objects.filter(
+            teacherprofile__isnull=False, is_superuser=False
+        ).only('id', 'username', 'first_name', 'last_name'),
         'buildings': LectureHall.objects.values_list('building', flat=True).distinct(),
     }
 
@@ -758,22 +768,38 @@ def ai_bulk_action(request):
         
         if action == 'approve_high':
             # Approve all logs with probability >= 50% as malpractice
-            high_prob_logs = unreviewed_logs.filter(probability_score__gte=50)
-            count = high_prob_logs.count()
+            high_prob_logs = list(unreviewed_logs.select_related(
+                'lecture_hall', 'lecture_hall__assigned_teacher'
+            ).filter(probability_score__gte=50))
+            count = len(high_prob_logs)
             
-            # Send notifications for each approved log that has an assigned teacher
+            # Bulk update all logs at once instead of saving one by one
+            notification_ids = []
             for log in high_prob_logs:
                 log.verified = True
                 log.is_malpractice = True
                 log.teacher_visible = True
-                log.save()
-                
                 if log.lecture_hall and log.lecture_hall.assigned_teacher:
-                    notification_thread = Thread(
-                        target=send_notifications_background, args=(log.id,)
-                    )
-                    notification_thread.daemon = True
-                    notification_thread.start()
+                    notification_ids.append(log.id)
+            
+            MalpraticeDetection.objects.bulk_update(
+                high_prob_logs, ['verified', 'is_malpractice', 'teacher_visible'], batch_size=200
+            )
+            
+            # Send notifications in a single background thread (bounded)
+            def _send_bulk_notifications(log_ids):
+                for log_id in log_ids:
+                    try:
+                        send_notifications_background(log_id)
+                    except Exception as e:
+                        print(f"[ERROR] Notification failed for log {log_id}: {e}")
+            
+            if notification_ids:
+                notification_thread = Thread(
+                    target=_send_bulk_notifications, args=(notification_ids,)
+                )
+                notification_thread.daemon = True
+                notification_thread.start()
             
             return JsonResponse({
                 'status': 'success', 
@@ -951,14 +977,14 @@ def delete_selected_logs(request):
 @login_required
 @user_passes_test(is_admin)
 def manage_lecture_halls(request):
-    teachers = User.objects.filter(is_superuser=False)
+    teachers = User.objects.filter(is_superuser=False).only('id', 'username', 'first_name', 'last_name')
     error_message = None
     query = request.GET.get('q', '')
     building_filter = request.GET.get('building', '')
     assignment_filter = request.GET.get('assigned', '')
 
     buildings = LectureHall.objects.values_list('building', flat=True).distinct()
-    lecture_halls = LectureHall.objects.all()
+    lecture_halls = LectureHall.objects.select_related('assigned_teacher').all()
 
     if query:
         lecture_halls = lecture_halls.filter(hall_name__icontains=query)
@@ -1000,8 +1026,8 @@ def manage_lecture_halls(request):
                 hall.save()
                 TeacherProfile.objects.filter(user=teacher).update(lecture_hall=hall)
                 return redirect('manage_lecture_halls')
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Map teacher error: {e}")
 
         elif 'unmap_teacher' in request.POST:
             hall_id = request.POST.get('hall_id')
@@ -1012,8 +1038,8 @@ def manage_lecture_halls(request):
                     hall.assigned_teacher = None
                     hall.save()
                 return redirect('manage_lecture_halls')
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Unmap teacher error: {e}")
 
         elif 'delete_hall' in request.POST:
             hall_id = request.POST.get('hall_id')
@@ -1031,8 +1057,8 @@ def manage_lecture_halls(request):
                 # Delete the hall
                 hall.delete()
                 return redirect('manage_lecture_halls')
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Delete hall error: {e}")
 
     return render(request, 'manage_lecture_halls.html', {
         'lecture_halls': lecture_halls,

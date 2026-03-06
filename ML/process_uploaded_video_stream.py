@@ -9,9 +9,13 @@ from datetime import datetime
 import torch
 import shutil
 from collections import deque
+from dotenv import load_dotenv
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(__file__))
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # Import GPU configuration
 try:
@@ -23,10 +27,12 @@ except:
 
 from ultralytics import YOLO
 
-# Database configuration
-DB_USER = "root"
-DB_PASSWORD = "robertlewandowski"
-DB_NAME = "aiinvigilator_db"
+# Database configuration — read from environment variables
+DB_USER = os.environ.get('DB_USER', 'root')
+DB_PASSWORD = os.environ.get('DB_PASS', '')
+DB_NAME = os.environ.get('DB_NAME', 'aiinvigilator_db')
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_PORT = int(os.environ.get('DB_PORT', '3306'))
 
 # Model paths
 try:
@@ -339,7 +345,8 @@ def save_video_to_database(action, video_filepath, lecture_hall_id,
         )
         
         db = mysql.connector.connect(
-            host="localhost",
+            host=DB_HOST,
+            port=DB_PORT,
             user=DB_USER,
             password=DB_PASSWORD,
             database=DB_NAME
@@ -370,7 +377,7 @@ def save_video_to_database(action, video_filepath, lecture_hall_id,
                 hall_name = str(lecture_hall_id)
                 try:
                     db2 = mysql.connector.connect(
-                        host="localhost", user=DB_USER,
+                        host=DB_HOST, port=DB_PORT, user=DB_USER,
                         password=DB_PASSWORD, database=DB_NAME
                     )
                     c2 = db2.cursor()

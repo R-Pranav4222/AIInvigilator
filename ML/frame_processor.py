@@ -459,9 +459,9 @@ class FrameProcessor:
         final_path = os.path.join(self._media_root, filename)
 
         try:
-            shutil.copy(temp_path, final_path)
+            shutil.move(temp_path, final_path)
         except Exception as e:
-            logger.error(f"Failed to copy recording {temp_path} → {final_path}: {e}")
+            logger.error(f"Failed to move recording {temp_path} → {final_path}: {e}")
             self._reset_recording_state(action)
             return None
 
@@ -473,11 +473,7 @@ class FrameProcessor:
             rec['conf_sum'] / rec['conf_count'] if rec['conf_count'] > 0 else 0.0
         )
 
-        # Cleanup temp file
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
+        # No need to remove temp file since shutil.move already moved it
 
         det_frames = rec['det_frames']
         self._reset_recording_state(action)

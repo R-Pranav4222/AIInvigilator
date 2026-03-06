@@ -3,6 +3,7 @@ import json
 import base64
 import asyncio
 import logging
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Thread pool for ML processing (max 3 concurrent streams)
 ml_executor = ThreadPoolExecutor(max_workers=3)
+
+# Lock for thread-safe access to global state
+_state_lock = threading.Lock()
 
 # Global state for active streams
 ACTIVE_STREAMS = {}  # {teacher_id: {'channel_name': ..., 'hall_id': ...}}
@@ -91,7 +95,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
                     # Start a timer — if no admin reconnects in 60s, warn teachers
                     logger.warning(f"Last admin disconnected. Starting {ADMIN_TIMEOUT_SECONDS}s warning timer.")
                     global _admin_disconnect_timer
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     _admin_disconnect_timer = loop.call_later(
                         ADMIN_TIMEOUT_SECONDS,
                         lambda: asyncio.ensure_future(self._admin_timeout_handler())
@@ -748,7 +752,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
             # Finalize any active recordings before disconnect
             if self.frame_processor:
                 try:
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     completed = await loop.run_in_executor(
                         ml_executor, self.frame_processor.finalize_all_recordings
                     )
@@ -800,7 +804,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
 
         # Buffer EVERY frame for video recording (quick operation)
         if self.frame_processor:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             asyncio.ensure_future(
                 loop.run_in_executor(ml_executor, self.frame_processor.buffer_frame, frame_bytes)
             )
@@ -847,7 +851,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
                 return
 
             # Process in thread pool (ML inference + recording management)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 ml_executor,
                 self.frame_processor.process_frame,
@@ -887,7 +891,7 @@ class CameraStreamConsumer(AsyncWebsocketConsumer):
         """Initialize ML frame processor in background thread.
         Pre-warms models on first use to eliminate cold-start delay."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self.frame_processor = await loop.run_in_executor(
                 ml_executor, self._create_frame_processor
             )

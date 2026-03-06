@@ -30,7 +30,7 @@ class CameraSession(models.Model):
     ]
     teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='camera_sessions')
     lecture_hall = models.ForeignKey(LectureHall, on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='requested')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='requested', db_index=True)
     started_at = models.DateTimeField(null=True, blank=True)
     stopped_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -48,17 +48,17 @@ class MalpraticeDetection(models.Model):
         ('live', 'Live Camera'),
         ('recorded', 'Recorded Video'),
     ]
-    date = models.DateField(null=True)
+    date = models.DateField(null=True, db_index=True)
     time = models.TimeField(null=True)
     malpractice = models.CharField(max_length=150)
     proof = models.CharField(max_length=150)
     is_malpractice = models.BooleanField(null=True)
-    verified = models.BooleanField(default=False)
+    verified = models.BooleanField(default=False, db_index=True)
     lecture_hall = models.ForeignKey(LectureHall, on_delete=models.SET_NULL, null=True, blank=True)
-    probability_score = models.FloatField(null=True, blank=True, help_text="AI-computed probability of malpractice (0-100)")
-    source_type = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='live')
+    probability_score = models.FloatField(null=True, blank=True, db_index=True, help_text="AI-computed probability of malpractice (0-100)")
+    source_type = models.CharField(max_length=10, choices=SOURCE_CHOICES, default='live', db_index=True)
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='uploaded_logs')
-    teacher_visible = models.BooleanField(default=False, help_text="Visible to teacher only after admin review")
+    teacher_visible = models.BooleanField(default=False, db_index=True, help_text="Visible to teacher only after admin review")
 
     def __str__(self):
         return f"{self.malpractice} - {self.date} {self.time}"
@@ -95,7 +95,7 @@ class TeacherProfile(models.Model):
     phone = models.CharField(max_length=20)
     profile_picture = models.ImageField(upload_to='profile_pics/', blank=True, null=True)
     lecture_hall = models.OneToOneField(LectureHall, on_delete=models.SET_NULL, null=True, blank=True)
-    is_online = models.BooleanField(default=False)
+    is_online = models.BooleanField(default=False, db_index=True)
     last_seen = models.DateTimeField(null=True, blank=True)
     def __str__(self):
         return self.user.username
