@@ -16,6 +16,10 @@
   <img src="https://img.shields.io/badge/CUDA-12.1-76B900?logo=nvidia&logoColor=white" alt="CUDA"/>
   <img src="https://img.shields.io/badge/YOLOv8-Ultralytics-purple" alt="YOLO"/>
   <img src="https://img.shields.io/badge/WebSockets-Channels-orange" alt="WebSockets"/>
+  <img src="https://img.shields.io/badge/Celery-5.6-green?logo=celery&logoColor=white" alt="Celery"/>
+  <img src="https://img.shields.io/badge/Redis-7.x-red?logo=redis&logoColor=white" alt="Redis"/>
+  <img src="https://img.shields.io/badge/Tests-45_passing-brightgreen?logo=pytest&logoColor=white" alt="Tests"/>
+  <img src="https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?logo=githubactions&logoColor=white" alt="CI/CD"/>
 </p>
 
 ---
@@ -158,6 +162,11 @@ Each detection receives a probability score (0-100%) calculated using a weighted
 - 💾 **H.264 Video Encoding** — Browser-compatible video evidence clips
 - 🔒 **Session Management** — Race condition protection, deduplication, heartbeat monitoring
 - 🌐 **LAN Access** — Multiple devices can connect via WiFi without any installation
+- 🗄️ **Redis Channel Layer** — Production-grade WebSocket backend replacing in-memory layer
+- 📨 **Celery Task Queue** — Reliable background email/SMS notifications with retry logic
+- 🔗 **DB Connection Pooling** — SQLAlchemy-backed MySQL connection pool (10 persistent + 20 overflow)
+- 🧪 **Automated Testing** — 45 pytest tests covering models, views, and tasks
+- 🔁 **CI/CD Pipeline** — GitHub Actions with automated testing, linting, and Docker builds
 
 ---
 
@@ -176,8 +185,8 @@ Each detection receives a probability score (0-100%) calculated using a weighted
 
 ### Software Dependencies
 - Python 3.10+
-- MySQL Server
-- Redis Server (for WebSocket channel layer)
+- MySQL Server 8.0+
+- Docker Desktop (for Redis container)
 - Git
 - NVIDIA CUDA Toolkit 12.1 (optional, for GPU acceleration)
 
@@ -254,17 +263,20 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-### 7. Install and Start Redis
+### 7. Start Redis (Docker)
 
-Redis is required for WebSocket communication (Django Channels).
+Redis is required for WebSocket communication (Django Channels) and Celery task queue.
 
-**Windows:** Download from [Redis for Windows](https://github.com/tporadowski/redis/releases) or use WSL.
-
-**Linux:**
 ```bash
-sudo apt install redis-server
-sudo systemctl start redis
+# Make sure Docker Desktop is running, then:
+docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+
+# Verify it's running:
+docker exec redis redis-cli ping
+# Should return: PONG
 ```
+
+> Redis starts automatically whenever Docker Desktop is running (`--restart unless-stopped`).
 
 ---
 
@@ -278,6 +290,22 @@ python manage.py runserver
 
 # Network access (other devices on same WiFi can connect)
 python manage.py runserver 0.0.0.0:8000
+```
+
+### Start Celery Worker (Optional — for background notifications)
+
+In a **separate terminal** (same directory as `manage.py`):
+
+```bash
+celery -A app worker --pool=solo --loglevel=info
+```
+
+> The Celery worker processes background email/SMS notifications. The app works without it, but notifications will queue until a worker starts.
+
+### Run Tests
+
+```bash
+pytest tests/ -v
 ```
 
 ### Access the App
@@ -342,8 +370,11 @@ AIInvigilator/
 │   ├── models.py                 # Database models (CameraSession, MalpracticeDetection, etc.)
 │   ├── views.py                  # HTTP views (pages, API endpoints)
 │   ├── urls.py                   # URL routing
-│   ├── settings.py               # Django configuration
-│   └── routing.py                # WebSocket URL routing
+│   ├── settings.py               # Django configuration (Redis, Celery, DB pooling)
+│   ├── routing.py                # WebSocket URL routing
+│   ├── celery.py                 # Celery app configuration & autodiscovery
+│   ├── tasks.py                  # Background tasks (email/SMS notifications)
+│   └── utils.py                  # Helper functions (SMS, email utilities)
 │
 ├── ML/                           # Machine Learning pipeline
 │   ├── frame_processor.py        # Core ML processing (YOLO inference, detection logic)
@@ -361,9 +392,17 @@ AIInvigilator/
 │   ├── malpractice_log.html      # Detection log with filters
 │   └── upload_video.html         # Video upload interface
 │
+├── tests/                        # Automated test suite (pytest)
+│   ├── conftest.py               # Shared fixtures (users, halls, logs)
+│   ├── test_models.py            # 16 model tests (CRUD, FK, indexes)
+│   ├── test_views.py             # 24 view tests (auth, CRUD, permissions)
+│   └── test_tasks.py             # 5 Celery task tests (mocked email/SMS)
+│
+├── .github/workflows/ci.yml      # CI/CD pipeline (GitHub Actions)
 ├── static/                       # Static assets (CSS, JS, images)
 ├── media/                        # Uploaded videos and evidence clips
 ├── .env                          # Environment configuration
+├── pytest.ini                    # Pytest configuration
 ├── requirements.txt              # Python dependencies
 ├── manage.py                     # Django management script
 └── README.md                     # This file
@@ -376,12 +415,15 @@ AIInvigilator/
 | Layer | Technology |
 |-------|-----------|
 | **Backend** | Django 6.0, Daphne (ASGI) |
-| **WebSockets** | Django Channels, Redis |
+| **WebSockets** | Django Channels, Redis 7 (Docker) |
+| **Task Queue** | Celery 5.6 with Redis broker |
 | **ML/AI** | YOLOv8, YOLOv11, Ultralytics, PyTorch |
 | **GPU** | NVIDIA CUDA 12.1, cuDNN |
-| **Database** | MySQL 8.0 |
+| **Database** | MySQL 8.0 with SQLAlchemy connection pooling |
 | **Frontend** | HTML5, CSS3, JavaScript (Vanilla) |
 | **Video** | OpenCV, H.264 encoding |
+| **Testing** | pytest 9.0, pytest-django, 45 automated tests |
+| **CI/CD** | GitHub Actions (test + Docker build) |
 | **Fonts/Icons** | Google Fonts (Inter), FontAwesome |
 
 ---
@@ -409,6 +451,43 @@ For production deployment, make sure to:
 - Configure `ALLOWED_HOSTS` with specific domain/IP
 - Use HTTPS with SSL certificates
 - Change `SECRET_KEY` to a unique value
+- Set Redis to require authentication (`requirepass`)
+- Use environment variables for all secrets (`.env` file)
+- Run Celery worker with limited concurrency in production
+
+---
+
+## 🧪 Testing & CI/CD
+
+### Automated Test Suite
+
+The project includes **45 automated tests** organized into 3 test files:
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `tests/test_models.py` | 16 | Models, FK constraints, CASCADE/SET_NULL, indexes, ordering |
+| `tests/test_views.py` | 24 | Auth, permissions, CRUD, filters, JSON responses |
+| `tests/test_tasks.py` | 5 | Celery tasks with mocked email/SMS services |
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_models.py -v
+
+# Run with coverage
+pytest tests/ -v --tb=short
+```
+
+### CI/CD Pipeline (GitHub Actions)
+
+Every push to `main` and every pull request triggers:
+
+1. **Test Job** — Spins up Redis + MySQL services, installs dependencies, runs migrations, executes all 45 tests
+2. **Docker Build Job** — Builds the Docker image and caches layers (runs only on push to `main` if tests pass)
+
+Pipeline config: `.github/workflows/ci.yml`
 
 ---
 
