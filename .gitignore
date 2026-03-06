@@ -57,3 +57,11 @@ ML/runs/
 ML/checkpoints/
 ML/models/custom/malpractice_detector*/
 ML/models/custom/malpractice_training/
+
+# Study guides & docs (local only)
+STUDY_GUIDE_*.md
+STUDY_GUIDE_*.docx
+PERSON_*.md
+PROJECT_STUDY_GUIDE_OVERVIEW.md
+ML_INTEGRATION_PLAN.md
+convert_guides_to_docx.py
