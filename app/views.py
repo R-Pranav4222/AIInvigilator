@@ -20,6 +20,7 @@ from django.contrib.auth.forms import PasswordChangeForm
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.admin.views.decorators import staff_member_required
 from .utils import ssh_run_script, local_run_script
+from .tasks import send_malpractice_notification, send_review_session_email, send_bulk_notifications
 import logging
 import threading
 import asyncio
@@ -531,55 +532,7 @@ def malpractice_log(request):
     return render(request, 'malpractice_log.html', context)
 
 
-
-def send_notifications_background(log_id):
-    """Send email and SMS notifications in background thread"""
-    try:
-        log = MalpraticeDetection.objects.get(id=log_id)
-        teacher_user = log.lecture_hall.assigned_teacher
-        
-        try:
-            teacher_profile = teacher_user.teacherprofile
-        except TeacherProfile.DoesNotExist:
-            print(f"[WARN] No profile found for user: {teacher_user.username}")
-            teacher_profile = None
-
-        # Send Email Notification
-        subject = 'Malpractice Alert: New Case Reviewed'
-        message_body = (
-            f"Dear {teacher_user.get_full_name() or teacher_user.username},\n\n"
-            f"A malpractice has been detected in your classroom and has been approved by the examination cell.\n\n"
-            f"Details:\n"
-            f"- 📅 Date: {log.date}\n"
-            f"- ⏰ Time: {log.time}\n"
-            f"- 🎯 Type: {log.malpractice}\n"
-            f"- 🏫 Lecture Hall: {log.lecture_hall.building} - {log.lecture_hall.hall_name}\n\n"
-            f"You can view the recorded video proof from your AIInvigilator portal.\n\n"
-            f"Best regards,\nAIInvigilator Team"
-        )
-
-        try:
-            send_mail(subject, message_body, settings.EMAIL_HOST_USER, [teacher_user.email], fail_silently=False)
-        except Exception as e:
-            print(f"\n[ERROR] Email sending failed: {e}\n")
-
-        # Send SMS Notification if phone is available
-        if teacher_profile and teacher_profile.phone:
-            sms_message_body = (
-                f'''
-                \nDear {teacher_user.get_full_name() or teacher_user.username},\n\n'''
-                f"🔔 Malpractice Alert\n"
-                f"{log.date} | {log.time}\n"
-                f"{log.malpractice} detected in {log.lecture_hall.building}-{log.lecture_hall.hall_name}.\n"
-                f"\nCheck AIInvigilator for video proof."
-            )
-
-            try:
-                send_sms_notification(f"+91{teacher_profile.phone.strip()}", sms_message_body)
-            except Exception as e:
-                print(f"\n[ERROR] SMS sending failed: {e}\n")
-    except Exception as e:
-        print(f"[ERROR] Background notification failed: {e}")
+# Notification logic moved to app/tasks.py (Celery tasks with auto-retry)
 
 
 @login_required
@@ -608,11 +561,9 @@ def review_malpractice(request):
             log.teacher_visible = True
         log.save()
 
-        # If approved as malpractice, send notifications in background thread
+        # If approved as malpractice, send notifications via Celery
         if log.is_malpractice and log.lecture_hall and log.lecture_hall.assigned_teacher:
-            notification_thread = Thread(target=send_notifications_background, args=(log.id,))
-            notification_thread.daemon = True
-            notification_thread.start()
+            send_malpractice_notification.delay(log.id)
 
         return JsonResponse({'success': True})
 
@@ -670,56 +621,8 @@ def complete_review_session(request):
             email_sent=False
         )
 
-        # Send summary email in background
-        def send_review_email(session_id):
-            try:
-                session = ReviewSession.objects.get(id=session_id)
-                teacher_user = session.teacher
-                hall_obj = session.lecture_hall
-
-                subject = 'Malpractice Review Session Complete - AIInvigilator'
-                message_body = (
-                    f"Dear {teacher_user.get_full_name() or teacher_user.username},\n\n"
-                    f"The examination cell has completed a malpractice review session.\n\n"
-                    f"Review Summary:\n"
-                    f"- Lecture Hall: {hall_obj.building} - {hall_obj.hall_name}\n"
-                    f"- Date: {session.session_date}\n"
-                    f"- Total Logs Reviewed: {session.logs_reviewed}\n"
-                    f"- Logs Flagged as Malpractice: {session.logs_flagged}\n\n"
-                    f"You can now view the flagged malpractice logs in your Malpractice Log section "
-                    f"on the AIInvigilator portal.\n\n"
-                    f"Please review the evidence and take appropriate action.\n\n"
-                    f"Best regards,\nAIInvigilator System"
-                )
-
-                try:
-                    send_mail(subject, message_body, settings.EMAIL_HOST_USER,
-                              [teacher_user.email], fail_silently=False)
-                    session.email_sent = True
-                    session.save()
-                    print(f"[INFO] Review session email sent to {teacher_user.email}")
-                except Exception as e:
-                    print(f"[ERROR] Failed to send review email: {e}")
-
-                # Send SMS if available
-                try:
-                    teacher_profile = teacher_user.teacherprofile
-                    if teacher_profile and teacher_profile.phone:
-                        sms_body = (
-                            f"AIInvigilator: Review complete for {hall_obj.building}-{hall_obj.hall_name}. "
-                            f"{session.logs_flagged} malpractice case(s) found out of {session.logs_reviewed} reviewed. "
-                            f"Check portal for details."
-                        )
-                        send_sms_notification(f"+91{teacher_profile.phone.strip()}", sms_body)
-                except Exception as e:
-                    print(f"[ERROR] SMS notification failed: {e}")
-
-            except Exception as e:
-                print(f"[ERROR] Review email background task failed: {e}")
-
-        email_thread = Thread(target=send_review_email, args=(review_session.id,))
-        email_thread.daemon = True
-        email_thread.start()
+        # Send summary email via Celery task
+        send_review_session_email.delay(review_session.id)
 
         return JsonResponse({
             'success': True,
@@ -786,20 +689,9 @@ def ai_bulk_action(request):
                 high_prob_logs, ['verified', 'is_malpractice', 'teacher_visible'], batch_size=200
             )
             
-            # Send notifications in a single background thread (bounded)
-            def _send_bulk_notifications(log_ids):
-                for log_id in log_ids:
-                    try:
-                        send_notifications_background(log_id)
-                    except Exception as e:
-                        print(f"[ERROR] Notification failed for log {log_id}: {e}")
-            
+            # Send notifications via Celery (replaces Thread spawning)
             if notification_ids:
-                notification_thread = Thread(
-                    target=_send_bulk_notifications, args=(notification_ids,)
-                )
-                notification_thread.daemon = True
-                notification_thread.start()
+                send_bulk_notifications.delay(notification_ids)
             
             return JsonResponse({
                 'status': 'success', 

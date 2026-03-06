@@ -51,17 +51,15 @@ INSTALLED_APPS = [
 # ASGI application (Channels)
 ASGI_APPLICATION = 'app.asgi.application'
 
-# Channel Layers - Use Redis for production, InMemory for dev
-# To switch to Redis: docker run -d -p 6379:6379 redis:7-alpine
-# Then uncomment the Redis config and comment InMemory
+# Channel Layers - Redis for production-grade WebSocket support
+# Redis runs via Docker: docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+REDIS_URL = env('REDIS_URL', default='redis://127.0.0.1:6379/0')
+
 CHANNEL_LAYERS = {
     'default': {
-        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        # 'CONFIG': {
-        #     'hosts': [('127.0.0.1', 6379)],
-        # },
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
+            'hosts': [REDIS_URL],
             'capacity': 1000,
             'expiry': 10,
         },
@@ -99,14 +97,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'app.wsgi.application'
 
+# ─── Celery Task Queue ─────────────────────────────────────────────
+# Uses same Redis as channel layer (different DB number)
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/1')
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://127.0.0.1:6379/2')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Asia/Kolkata'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 300  # 5 min hard limit per task
+CELERY_TASK_SOFT_TIME_LIMIT = 240  # 4 min soft limit (raises SoftTimeLimitExceeded)
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# for local
+# for local — with connection pooling for high concurrency
 DATABASES ={
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
+        'ENGINE': 'dj_db_conn_pool.backends.mysql',
         'NAME': env('DB_NAME'),
         'HOST': env('DB_HOST', default='localhost'),
         'USER': env('DB_USER'),
@@ -114,7 +125,12 @@ DATABASES ={
         'PORT': env('DB_PORT', default='3306'),
         'OPTIONS':{
             'init_command':"SET sql_mode='STRICT_TRANS_TABLES'",
-        }
+        },
+        'POOL_OPTIONS': {
+            'POOL_SIZE': 10,        # Persistent connections kept open
+            'MAX_OVERFLOW': 20,     # Extra connections under spike load
+            'RECYCLE': 300,         # Recycle connections every 5 min
+        },
     }
 }
 
