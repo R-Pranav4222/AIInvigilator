@@ -76,7 +76,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
           pip install pytest pytest-django pytest-asyncio
 
       - name: Wait for MySQL
