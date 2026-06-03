@@ -5,7 +5,6 @@ Quickly check if both rule-based CV and custom ML model are working
 
 import os
 import torch
-from pathlib import Path
 from colorama import init, Fore, Style
 init(autoreset=True)
 
