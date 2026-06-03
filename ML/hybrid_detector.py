@@ -6,7 +6,6 @@ NO DATASET DOWNLOAD NEEDED - Uses COCO pre-trained models!
 
 import torch
 import cv2
-import numpy as np
 from ultralytics import YOLO
 from datetime import datetime
 import os
