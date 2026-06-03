@@ -3,8 +3,6 @@ Quick Test Helper for Hybrid Detection System
 Shows which detections are working and provides testing guidance
 """
 
-import cv2
-import numpy as np
 from colorama import init, Fore, Style
 init(autoreset=True)
 
