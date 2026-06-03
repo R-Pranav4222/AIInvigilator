@@ -12,7 +12,6 @@ from pathlib import Path
 import time
 from datetime import datetime, timedelta
 import json
-from tqdm import tqdm
 import sys
 
 
