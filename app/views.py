@@ -92,12 +92,28 @@ def calculate_retroactive_probability(log):
 
 def ensure_probability_scores(logs_queryset):
     """Fill in probability scores for any logs that don't have one yet."""
-    logs_without_score = list(logs_queryset.filter(probability_score__isnull=True))
-    if not logs_without_score:
+    from django.db.models import Case, When, Value, FloatField
+
+    unscored = logs_queryset.filter(probability_score__isnull=True)
+    if not unscored.exists():
         return
-    for log in logs_without_score:
-        log.probability_score = calculate_retroactive_probability(log)
-    MalpraticeDetection.objects.bulk_update(logs_without_score, ['probability_score'], batch_size=200)
+
+    # Bulk update in database using pre-calculated defaults based on the formula:
+    # Default clip_duration = 0.0 -> duration_score = 0.20
+    # probability = (0.20 * 0.60 + type_score * 0.40) * 100
+    # probability = (0.12 + type_score * 0.40) * 100
+
+    unscored.update(
+        probability_score=Case(
+            When(malpractice='Mobile Phone Detected', then=Value(44.0)), # (0.12 + 0.80*0.4)*100
+            When(malpractice='Turning Back', then=Value(40.0)),          # (0.12 + 0.70*0.4)*100
+            When(malpractice='Leaning', then=Value(36.0)),               # (0.12 + 0.60*0.4)*100
+            When(malpractice='Passing Paper', then=Value(34.0)),         # (0.12 + 0.55*0.4)*100
+            When(malpractice='Hand Raised', then=Value(30.0)),           # (0.12 + 0.45*0.4)*100
+            default=Value(32.0),                                         # (0.12 + 0.50*0.4)*100
+            output_field=FloatField()
+        )
+    )
 
 def is_admin(user):
     return user.is_superuser
