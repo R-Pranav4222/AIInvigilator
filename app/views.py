@@ -1281,17 +1281,31 @@ def stream_video_processing(request, session_id):
                     if hall_id:
                         filters['lecture_hall_id'] = hall_id
 
-                    qs = MalpraticeDetection.objects.filter(
+                    from django.db.models import Count, Value, Case, When, Q, F
+
+                    top_ids_qs = MalpraticeDetection.objects.filter(
                         **filters,
                         time__gte=start_dt.time(),
-                    ).order_by('-id')[:500]
+                    ).order_by('-id').values_list('id', flat=True)[:500]
+
+                    top_ids_list = list(top_ids_qs)
+
+                    grouped_qs = MalpraticeDetection.objects.filter(
+                        id__in=top_ids_list
+                    ).annotate(
+                        dtype=Case(
+                            When(Q(malpractice__isnull=True) | Q(malpractice__exact=''), then=Value('Unknown')),
+                            default=F('malpractice')
+                        )
+                    ).values('dtype').annotate(
+                        c=Count('id')
+                    ).order_by()
 
                     count = 0
                     types = {}
-                    for det in qs:
-                        count += 1
-                        dtype = det.malpractice or 'Unknown'
-                        types[dtype] = types.get(dtype, 0) + 1
+                    for row in grouped_qs:
+                        types[row['dtype']] = row['c']
+                        count += row['c']
                     return count, types
 
                 det_count, det_types = await _count_detections()
