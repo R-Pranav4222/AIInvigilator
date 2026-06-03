@@ -118,10 +118,10 @@ CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 DATABASES ={
     'default': {
         'ENGINE': 'dj_db_conn_pool.backends.mysql',
-        'NAME': env('DB_NAME'),
+        'NAME': env('DB_NAME', default='aiinvigilator_test'),
         'HOST': env('DB_HOST', default='localhost'),
-        'USER': env('DB_USER'),
-        'PASSWORD': env('DB_PASS'),
+        'USER': env('DB_USER', default='root'),
+        'PASSWORD': env('DB_PASS', default='testpassword'),
         'PORT': env('DB_PORT', default='3306'),
         'OPTIONS':{
             'init_command':"SET sql_mode='STRICT_TRANS_TABLES'",
@@ -198,15 +198,15 @@ EMAIL_BACKEND = 'app.custom_email_backend.CustomEmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = env('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
+EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='dummy_email_user')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='dummy_email_password')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
 # Twilio Config
-TWILIO_ACCOUNT_SID = env('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = env('TWILIO_AUTH_TOKEN')
-TWILIO_PHONE_NUMBER = env('TWILIO_PHONE_NUMBER')
+TWILIO_ACCOUNT_SID = env('TWILIO_ACCOUNT_SID', default='dummy_account_sid')
+TWILIO_AUTH_TOKEN = env('TWILIO_AUTH_TOKEN', default='dummy_auth_token')
+TWILIO_PHONE_NUMBER = env('TWILIO_PHONE_NUMBER', default='dummy_phone_number')
 
 
 # ======================
