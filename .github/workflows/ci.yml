@@ -76,7 +76,8 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install $(grep -ivE "torch|pywin32" requirements.txt)
+          pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install pytest pytest-django pytest-asyncio
 
       - name: Wait for MySQL
