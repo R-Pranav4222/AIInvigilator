@@ -6,7 +6,6 @@ import cv2
 import numpy as np
 import mysql.connector
 from datetime import datetime
-import torch
 import shutil
 from collections import deque
 from dotenv import load_dotenv
