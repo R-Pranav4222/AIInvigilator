@@ -3,7 +3,6 @@ Quick Performance Test - Verify the Fix
 Run this to confirm FPS is restored
 """
 
-import cv2
 import time
 import torch
 from ultralytics import YOLO
