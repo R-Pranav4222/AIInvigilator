@@ -57,6 +57,11 @@ jobs:
       CELERY_BROKER_URL: "redis://127.0.0.1:6379/1"
       CELERY_RESULT_BACKEND: "redis://127.0.0.1:6379/2"
       CELERY_TASK_ALWAYS_EAGER: "True"
+      EMAIL_HOST_USER: "dummy"
+      EMAIL_HOST_PASSWORD: "dummy"
+      TWILIO_ACCOUNT_SID: "dummy"
+      TWILIO_AUTH_TOKEN: "dummy"
+      TWILIO_PHONE_NUMBER: "dummy"
 
     steps:
       - name: Checkout code
