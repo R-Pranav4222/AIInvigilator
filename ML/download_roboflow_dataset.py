@@ -4,7 +4,6 @@ Dataset: https://universe.roboflow.com/research-xfm0x/major-aast-dataset-3d
 """
 
 from roboflow import Roboflow
-import os
 
 def download_dataset():
     """
