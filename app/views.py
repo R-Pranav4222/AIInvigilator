@@ -20,7 +20,7 @@ from django.contrib.auth.forms import PasswordChangeForm
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.admin.views.decorators import staff_member_required
 from .utils import ssh_run_script, local_run_script
-from .tasks import send_malpractice_notification, send_review_session_email, send_bulk_notifications
+from .tasks import send_malpractice_notification, send_review_session_email, send_bulk_notifications, delete_video_files_task
 import logging
 import threading
 import asyncio
@@ -787,15 +787,14 @@ def delete_all_logs(request):
                 messages.warning(request, f'No {log_type_msg} logs found to delete.')
                 return redirect('malpractice_log')
 
-            # Delete video files
+            # Delete video files via background task
+            video_paths = []
             for log in logs_to_delete:
                 if log.proof:
-                    video_path = os.path.join(settings.MEDIA_ROOT, log.proof)
-                    if os.path.exists(video_path):
-                        try:
-                            os.remove(video_path)
-                        except Exception as e:
-                            print(f"[WARN] Could not delete video file {log.proof}: {e}")
+                    video_paths.append(os.path.join(settings.MEDIA_ROOT, log.proof))
+
+            if video_paths:
+                delete_video_files_task.delay(video_paths)
             
             # Delete logs from database
             logs_to_delete.delete()
@@ -837,15 +836,14 @@ def delete_selected_logs(request):
             selected_logs = MalpraticeDetection.objects.filter(id__in=log_ids)
             count = selected_logs.count()
             
-            # Delete video files for selected logs
+            # Delete video files for selected logs via background task
+            video_paths = []
             for log in selected_logs:
                 if log.proof:
-                    video_path = os.path.join(settings.MEDIA_ROOT, log.proof)
-                    if os.path.exists(video_path):
-                        try:
-                            os.remove(video_path)
-                        except Exception as e:
-                            print(f"[WARN] Could not delete video file {log.proof}: {e}")
+                    video_paths.append(os.path.join(settings.MEDIA_ROOT, log.proof))
+
+            if video_paths:
+                delete_video_files_task.delay(video_paths)
             
             # Delete selected logs from database
             selected_logs.delete()

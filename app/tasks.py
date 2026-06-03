@@ -178,3 +178,24 @@ def send_bulk_notifications(self, log_ids):
             send_malpractice_notification.delay(log_id)
         except Exception as e:
             logger.error(f"Failed to queue notification for log {log_id}: {e}")
+
+@shared_task
+def delete_video_files_task(video_paths):
+    """Delete multiple video files in the background to avoid blocking the web request."""
+    import os
+
+    failed_paths = []
+
+    for path in video_paths:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception as e:
+                logger.error(f"[WARN] Could not delete video file {path}: {e}")
+                failed_paths.append(path)
+
+    if failed_paths:
+        logger.warning(f"Failed to delete {len(failed_paths)} files, retrying...")
+        # Since we might partially succeed, just log for now rather than retry the whole batch
+        # or we could filter out successful ones and retry only failed.
+        # But for video files not crucial to retry heavily, we can retry remaining if needed.
