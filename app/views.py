@@ -31,6 +31,16 @@ from .utils import RUNNING_SCRIPTS
 import time
 import cv2
 
+
+from django.core.cache import cache
+
+def get_buildings():
+    buildings = cache.get('buildings_list')
+    if buildings is None:
+        buildings = list(LectureHall.objects.values_list('building', flat=True).distinct())
+        cache.set('buildings_list', buildings, timeout=86400)
+    return buildings
+
 logger = logging.getLogger(__name__)
 
 # Global stop event
@@ -526,7 +536,7 @@ def malpractice_log(request):
         'faculty_list': User.objects.filter(
             teacherprofile__isnull=False, is_superuser=False
         ).only('id', 'username', 'first_name', 'last_name'),
-        'buildings': LectureHall.objects.values_list('building', flat=True).distinct(),
+        'buildings': get_buildings(),
     }
 
     return render(request, 'malpractice_log.html', context)
@@ -875,7 +885,7 @@ def manage_lecture_halls(request):
     building_filter = request.GET.get('building', '')
     assignment_filter = request.GET.get('assigned', '')
 
-    buildings = LectureHall.objects.values_list('building', flat=True).distinct()
+    buildings = get_buildings()
     lecture_halls = LectureHall.objects.select_related('assigned_teacher').all()
 
     if query:
@@ -973,7 +983,7 @@ def view_teachers(request):
 
     # Use the reverse relation "lecturehall" (LectureHall.assigned_teacher) 
     teachers = User.objects.filter(is_superuser=False).select_related('lecturehall')
-    buildings = LectureHall.objects.values_list('building', flat=True).distinct()
+    buildings = get_buildings()
 
     if assigned_filter == 'assigned':
         teachers = teachers.filter(lecturehall__isnull=False)

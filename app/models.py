@@ -1,3 +1,4 @@
+from django.core.cache import cache
 # models.py
 from django.db import models
 from django.contrib.auth.models import User
@@ -18,6 +19,15 @@ class LectureHall(models.Model):
     assigned_teacher = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True)
     def __str__(self):
         return f"{self.building} - {self.hall_name}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        cache.delete('buildings_list')
+
+    def delete(self, *args, **kwargs):
+        super().delete(*args, **kwargs)
+        cache.delete('buildings_list')
+
 
 
 # Camera Session Model - tracks an active webcam session
